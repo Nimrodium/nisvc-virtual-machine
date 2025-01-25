@@ -71,21 +71,38 @@ struct MemoryAddress {
 impl MemoryAddress {
     /// build `MemoryAddress` object from serialized byte representation
     /// takes in the address value (from program_rom) and `Memory` and decodes the rest of the address into an object
-    fn from_bytes(address: Vec<u8>, memory: Memory) -> Result<MemoryAddress, String> {
+    fn from_bytes(address: &mut Vec<u8>, memory: Memory) -> Result<MemoryAddress, String> {
         // use bit operations to extract data
         // remove metadata byte
         let metadata = address.remove(0);
         if address.len() != 4 {
             return Err("address is not a valid size".to_string());
         }
-        let address_bytes: [u8; 4] = match address.try_into() {
+        let address_bytes: [u8; 4] = match address.as_slice().try_into() {
             Ok(b) => b,
             Err(why) => return Err(format!("address is not a 32 bit value. {:?}", why).to_string()),
         };
+        // let address_bytes: [u8; 4] = [address[0], address[1], address[2], address[3]];
         let address: u32 = u32::from_le_bytes(address_bytes);
+        todo!()
     }
 }
 
-struct Operands {
+pub struct Operands {
     operands: Vec<MemoryAddress>,
+}
+
+impl Operands {
+    /// builds operands object from operands vector
+    fn new(bytes: Vec<u8>) -> Operands {
+        todo!()
+    }
+    /// dereference literal address
+    fn dereference(operand_idx: usize) -> usize {
+        todo!()
+    }
+    /// writes to an operands address
+    fn write(operand_idx: usize) {
+        todo!()
+    }
 }
