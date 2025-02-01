@@ -5,15 +5,33 @@ use crate::constant::{self, DATAROM_LENGTH_LOCATION};
 // memory.rs
 // memory interaction
 pub type Bytes = Vec<u8>;
-pub type MemoryAddress = Vec<u8>; // 72bits/9bytes actually
+// pub type MemoryAddress = Vec<u8>; // 72bits/9bytes actually
+enum Pool {
+    Rom,
+    Ram,
+}
+pub struct MemoryAddress {
+    pool : Pool,
+    address : u64,
+
+}
 pub struct Memory {
     ram: Bytes, // general purpose memory
     rom: Bytes, // program
     start_of_exec: usize,
     end_of_exec: usize,
+
 }
 impl Memory {
-    pub fn new(binary: &Path) -> Result<Self, String> {
+    pub fn new_uninit() -> Self{
+        Memory {
+            ram:vec![],
+            rom:vec![],
+            start_of_exec:0,
+            end_of_exec:0,
+        }
+    }
+    pub fn load(binary: &Path) -> Result<Self, String> {
         // verify signature
         // locate start and end of exec
         // mark start of execution section
@@ -93,4 +111,6 @@ impl Memory {
             end_of_exec,
         })
     }
+    pub fn new_address()
+    pub fn return_immut(self,address:MemoryAddress){}
 }
