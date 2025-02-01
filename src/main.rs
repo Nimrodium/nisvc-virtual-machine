@@ -1,7 +1,9 @@
+// main.rs
+//
+mod constant;
 mod cpu;
 mod memory;
-mod runtime;
-
+mod opcode;
 fn main() {
-    println!("Hello, world!");
+    todo!()
 }

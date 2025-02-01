@@ -1,108 +1,96 @@
-enum PoolType {
-    Data,
-    Program,
-    Stack,
-    Heap,
-}
-#[derive(Debug)]
-enum DataType {
-    // unsigned
-    Unsigned8,
-    Unsigned16,
-    Unsigned32,
+use std::{fs::File, io::Read, path::Path};
 
-    // signed
-    Signed8,
-    Signed16,
-    Signed32,
+use crate::constant::{self, DATAROM_LENGTH_LOCATION};
 
-    // complex
-    Array,
-    String,
-}
-
-struct Pool {
-    memory: Vec<u8>,
-}
+// memory.rs
+// memory interaction
+pub type Bytes = Vec<u8>;
+pub type MemoryAddress = Vec<u8>; // 72bits/9bytes actually
 pub struct Memory {
-    data_rom: Pool,
-    program_rom: Pool,
-    stack_ram: Pool,
+    ram: Bytes, // general purpose memory
+    rom: Bytes, // program
+    start_of_exec: usize,
+    end_of_exec: usize,
 }
-
 impl Memory {
-    /// read an address from memory and return its value
-    /// ONLY for literals up to 4 bytes.
-    /// to read arrays use `Memory::read_array()`
-    /// returns Result
-    /// Ok -> dereferenced value
-    /// Err -> Memory Address does not exist MemoryAccessViolation
-    fn read(address: MemoryAddress) -> Result<usize, String> {
-        todo!()
-    }
+    pub fn new(binary: &Path) -> Result<Self, String> {
+        // verify signature
+        // locate start and end of exec
+        // mark start of execution section
+        //
 
-    /// write to an address at memory and return Err on write failure
-    /// write may fail due to attempting to write to program_rom or data_rom,
-    /// or memory address does not exist,
-    /// ONLY for literal addresses, use Memory::write_array to write arrays
-    fn write(address: MemoryAddress) -> Result<(), String> {
-        todo!()
-    }
-    /// reads an index from an array address
-    fn read_array_index(address: MemoryAddress, index: usize) -> Result<usize, String> {
-        todo!()
-    }
-    /// copies and dereferences an array to heap
-    fn load_array() -> Result<(), String> {
-        todo!()
-    }
-}
-
-struct MemoryAddress {
-    // metadata byte
-    pool: PoolType,      // 2 bits
-    is_absolute: bool,   //1 bit
-    is_pointer: bool,    // 1 bit
-    data_type: DataType, // 4 bits
-
-    address: usize,
-}
-
-impl MemoryAddress {
-    /// build `MemoryAddress` object from serialized byte representation
-    /// takes in the address value (from program_rom) and `Memory` and decodes the rest of the address into an object
-    fn from_bytes(address: &mut Vec<u8>, memory: Memory) -> Result<MemoryAddress, String> {
-        // use bit operations to extract data
-        // remove metadata byte
-        let metadata = address.remove(0);
-        if address.len() != 4 {
-            return Err("address is not a valid size".to_string());
-        }
-        let address_bytes: [u8; 4] = match address.as_slice().try_into() {
-            Ok(b) => b,
-            Err(why) => return Err(format!("address is not a 32 bit value. {:?}", why).to_string()),
+        let mut binary_file: File = match File::open(binary) {
+            Ok(file) => file,
+            Err(why) => return Err(why.to_string()),
         };
-        // let address_bytes: [u8; 4] = [address[0], address[1], address[2], address[3]];
-        let address: u32 = u32::from_le_bytes(address_bytes);
-        todo!()
-    }
-}
+        let mut program_signature_buffer = vec![0; constant::SIGNATURE.len()];
+        match binary_file.read_exact(&mut program_signature_buffer) {
+            Ok(_) => (),
+            Err(why) => {
+                let error = format!("could not read signature :: {}", why);
+                return Err(error);
+            }
+        };
 
-pub struct Operands {
-    operands: Vec<MemoryAddress>,
-}
+        let program_signature = match String::from_utf8(program_signature_buffer) {
+            Ok(string) => string,
+            Err(why) => {
+                let error = format!("could not convert signature to string :: {}", why);
+                return Err(error);
+            }
+        };
 
-impl Operands {
-    /// builds operands object from operands vector
-    fn new(bytes: Vec<u8>) -> Operands {
-        todo!()
-    }
-    /// dereference literal address
-    fn dereference(operand_idx: usize) -> usize {
-        todo!()
-    }
-    /// writes to an operands address
-    fn write(operand_idx: usize) {
-        todo!()
+        if constant::SIGNATURE != program_signature {
+            let why = format!(
+                "exec format error; signature not valid, {} != {}",
+                constant::SIGNATURE,
+                program_signature
+            );
+            return Err(why);
+        } else {
+            println!("valid exec format");
+        }
+        let mut rom: Vec<u8> = vec![];
+        match binary_file.read_to_end(&mut rom) {
+            Ok(_) => (),
+            Err(why) => {
+                let error = format!("failed to read file into rom :: {}", why);
+                return Err(error);
+            }
+        };
+
+        let mut head = 0;
+        // read header data -- VVV --
+        //
+        // read data length
+        // first u64 after the signature is size of data section in bytes
+        let data_rom_length = u64::from_le_bytes(match &rom[head..head + 8].try_into() {
+            Ok(array) => *array,
+            Err(why) => {
+                let error = format!("failed to read datarom length :: {}", why);
+                return Err(error);
+            }
+        });
+        head += 8; // pass the datarom length
+                   // read exec length
+                   // next 8 bytes after datarom length
+        let start_of_exec = head + data_rom_length as usize;
+
+        let exec_rom_length = u64::from_le_bytes(match &rom[head..head + 8].try_into() {
+            Ok(array) => *array,
+            Err(why) => {
+                let error = format!("failed to read execrom length :: {}", why);
+                return Err(error);
+            }
+        });
+        head += 8;
+        let end_of_exec = head + exec_rom_length as usize;
+
+        Ok(Memory {
+            ram: vec![],
+            rom,
+            start_of_exec,
+            end_of_exec,
+        })
     }
 }

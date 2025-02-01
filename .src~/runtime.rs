@@ -16,6 +16,7 @@ impl Runtime {
     pub fn exec(&mut self) -> Result<Self, String> {
         todo!()
     }
+
     pub fn fetch_operands(&mut self) -> Result<Operands, String> {
         todo!()
     }
