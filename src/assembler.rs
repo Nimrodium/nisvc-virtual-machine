@@ -49,7 +49,9 @@ fn assemble(source_path: &Path) -> Result<Vec<u8>, String> {
     let (datarom, label_table, bytes_read) = parse_data_section(&source_str)?;
 
     let opcode_table = opcode_encoding_table();
+
     let program_rom = parse_program_section(&source_str, label_table, opcode_table, bytes_read)?;
+
     let mut header = build_header(&datarom, &program_rom);
     header.extend_from_slice(&datarom);
     header.extend_from_slice(&program_rom);
@@ -100,3 +102,5 @@ fn opcode_encoding_table() -> OpcodeTable {
     }
     lookup_table
 }
+
+fn decode_line(line:&str,opcode_table:&OpcodeTable,label_table:LabelTable)

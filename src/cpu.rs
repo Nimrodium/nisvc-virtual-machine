@@ -4,7 +4,7 @@
 use std::{fs::File, io::Read, path::Path};
 
 use crate::{
-    constant::{self, OpcodeSize},
+    constant::{self, OpcodeSize, RegisterSize},
     memory::{Memory, MemoryAddress, Pool},
     opcode::Opcode,
 };
@@ -125,7 +125,14 @@ impl Runtime {
         }
     }
     /// returns mutable reference to a register
-    fn get_mut_reg(&mut self, reg: usize) -> Result<&mut u64, String> {
+    fn get_mut_reg(&mut self, reg_bytes: Vec<u8>) -> Result<&mut u64, String> {
+        let reg = u64::from_le_bytes(match reg_bytes.as_slice().try_into() {
+            Ok(array) => array,
+            Err(why) => {
+                let error = format!("failed to read operand :: {}", why);
+                return Err(error);
+            }
+        });
         match reg {
             1 => Ok(&mut self.gpr.r1),
             2 => Ok(&mut self.gpr.r2),
@@ -163,7 +170,14 @@ impl Runtime {
         }
     }
     /// returns the value inside register
-    fn get_reg(&self, reg: usize) -> Result<u64, String> {
+    fn get_reg(&self, reg_bytes: Vec<u8>) -> Result<u64, String> {
+        let reg = u64::from_le_bytes(match reg_bytes.as_slice().try_into() {
+            Ok(array) => array,
+            Err(why) => {
+                let error = format!("failed to read operand :: {}", why);
+                return Err(error);
+            }
+        });
         match reg {
             1 => Ok(self.gpr.r1),
             2 => Ok(self.gpr.r2),
@@ -373,6 +387,16 @@ impl Runtime {
     // .0 = operands
     // .1 = read
     // Err
+
+    fn fetch_operand_bytes(&self, bytes: usize) -> Result<Vec<u8>, String> {
+        let address = MemoryAddress {
+            pool: Pool::Rom,
+            address: self.spr.pc,
+        };
+        let operand_bytes = self.memory.byte_slice(&address, bytes)?.to_vec();
+        Ok(operand_bytes)
+    }
+
     fn decode_operands(&self, expected: usize) -> Result<(Vec<u64>, usize), String> {
         let read_bytes = 8;
         let mut operands: Vec<u64> = Vec::with_capacity(expected);
@@ -401,107 +425,39 @@ fn inc_pc(bytes: usize) -> usize {
     let inc = size_of::<OpcodeSize>();
     inc + bytes
 }
-struct Inst;
+
 // return of all instructions are Ok(increment program counter),Err(instruction Error)
-impl Inst {
+impl Runtime {
     fn nop(runtime: &mut Runtime) -> Result<usize, String> {
         println!("nop");
 
         Ok(inc_pc(0))
     }
-    fn mov(runtime: &mut Runtime) -> Result<usize, String> {
-        println!("mov");
-        let operands = runtime.decode_operands(2)?;
 
-        let src = runtime.get_reg(*operands.0.get(1).ok_or("failed to read dest reg")? as usize)?;
-        let dest =
-            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
+    fn mov(&mut self) -> Result<usize, String> {
+        let operand_bytes = self.fetch_operand_bytes(constant::REGISTER_BYTES * 2)?;
+        let src_reg = self.get_reg(
+            operand_bytes[constant::REGISTER_BYTES..constant::REGISTER_BYTES * 2].to_vec(),
+        )?;
+        let dest_reg = self.get_mut_reg(operand_bytes[0..constant::REGISTER_BYTES].to_vec())?;
+        *dest_reg = src_reg;
 
-        *dest = src;
-        Ok(inc_pc(operands.1))
+        Ok(inc_pc(constant::REGISTER_BYTES * 2))
     }
-    fn movi(runtime: &mut Runtime) -> Result<usize, String> {
-        println!("movi");
-        let operands = runtime.decode_operands(2)?;
-        let dest =
-            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
-        *dest = *operands.0.get(1).ok_or("failed to read src imm")? as u64;
-        Ok(inc_pc(operands.1))
+    fn load(&mut self) -> Result<usize, String> {
+        let operand_bytes =
+            self.fetch_operand_bytes(constant::REGISTER_BYTES + constant::ADDRESS_BYTES)?;
+        let src_addr = MemoryAddress::new(
+            operand_bytes
+                [constant::REGISTER_BYTES..constant::REGISTER_BYTES + constant::ADDRESS_BYTES]
+                .to_vec(),
+        );
+        let src_address_deref = self.memory.byte_slice(src_addr, size)
+        let dest_reg = self.get_mut_reg(operand_bytes[0..constant::REGISTER_BYTES].to_vec());
     }
-    fn load(runtime: &mut Runtime) -> Result<usize, String> {
-        println!("load");
-
-        let operands = runtime.decode_operands(2)?;
-        let dest =
-            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
-        // let src = runtime
-        Ok(inc_pc(operands.1))
-    }
-    fn store(runtime: &mut Runtime) -> Result<usize, String> {
-        println!("store");
-        Ok(inc_pc(0))
-    }
-    fn add(runtime: &mut Runtime) -> Result<usize, String> {
-        println!("add");
-        let operands = runtime.decode_operands(3)?;
-
-        let addend1 =
-            runtime.get_reg(*operands.0.get(1).ok_or("failed to read dest reg")? as usize)?;
-        let addend2 =
-            runtime.get_reg(*operands.0.get(2).ok_or("failed to read dest reg")? as usize)?;
-        let sum =
-            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
-        *sum = addend1 + addend2;
-        Ok(inc_pc(operands.1))
-    }
-    fn sub(runtime: &mut Runtime) -> Result<usize, String> {
-        println!("sub");
-        let operands = runtime.decode_operands(3)?;
-
-        let minuend =
-            runtime.get_reg(*operands.0.get(1).ok_or("failed to read dest reg")? as usize)?;
-        let subtrahend =
-            runtime.get_reg(*operands.0.get(2).ok_or("failed to read dest reg")? as usize)?;
-        let difference =
-            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
-        *difference = minuend - subtrahend;
-        Ok(inc_pc(operands.1))
-    }
-    fn mult(runtime: &mut Runtime) -> Result<usize, String> {
-        println!("mult");
-        let operands = runtime.decode_operands(3)?;
-
-        let multiplicand =
-            runtime.get_reg(*operands.0.get(1).ok_or("failed to read dest reg")? as usize)?;
-        let multipler =
-            runtime.get_reg(*operands.0.get(2).ok_or("failed to read dest reg")? as usize)?;
-        let result =
-            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
-        *result = multiplicand * multipler;
-        Ok(inc_pc(operands.1))
-    }
-    fn div(runtime: &mut Runtime) -> Result<usize, String> {
-        println!("div");
-        let operands = runtime.decode_operands(4)?;
-
-        let dividend =
-            runtime.get_reg(*operands.0.get(2).ok_or("failed to read dest reg")? as usize)?;
-        let divisor =
-            runtime.get_reg(*operands.0.get(3).ok_or("failed to read dest reg")? as usize)?;
-
-        let qotient =
-            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
-        *qotient = dividend / divisor;
-
-        let remainder =
-            runtime.get_mut_reg(*operands.0.get(1).ok_or("failed to read dest reg")? as usize)?;
-        *remainder = dividend % divisor;
-
-        Ok(inc_pc(operands.1))
-    }
-    fn end_of_exec_section(runtime: &mut Runtime) -> Result<usize, String> {
+    fn end_of_exec_section(&mut self) -> Result<usize, String> {
         println!("end_of_exec_section");
-        runtime.state = State::ProgramExitedSuccess;
+        self.state = State::ProgramExitedSuccess;
         Ok(0)
     }
 }

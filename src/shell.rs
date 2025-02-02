@@ -106,6 +106,3 @@ impl Shell {
         Ok(())
     }
 }
-
-pub struct Commands;
-impl Commands {}
