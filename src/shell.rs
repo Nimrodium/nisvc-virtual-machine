@@ -1,4 +1,7 @@
-use crate::{constant, cpu::Runtime};
+use crate::{
+    constant,
+    cpu::{GeneralPurposeRegisters, Runtime, SpecialPurposeRegisters, State},
+};
 use rustyline::{error::ReadlineError, history::FileHistory, DefaultEditor, Editor};
 use std::{
     io::{self, Write},
@@ -68,6 +71,7 @@ impl Shell {
             "louis" => Ok(println!("louised")),
             "load" => self.cmd_load(cmd),
             "exec" => self.cmd_exec(cmd),
+            "reset" => self.cmd_reset(cmd),
             "" => Ok(()),
             _ => Err(format!("unrecognized command [{}]", command_word)),
         }
@@ -88,7 +92,18 @@ impl Shell {
         }
     }
     fn cmd_exec(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+        // self.runtime.spr.pc = 0x10;
+        println!("executing at PC {:#x?}", self.runtime.spr.pc);
+        io::stdout().flush().expect("boowomp");
         self.runtime.exec()
+    }
+    fn cmd_reset(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+        println!("reset runtime executable");
+        self.runtime.spr = SpecialPurposeRegisters::new();
+        self.runtime.gpr = GeneralPurposeRegisters::new();
+        self.runtime.state = State::ProgramLoadedNotStarted;
+        self.runtime.spr.pc = self.runtime.memory.start_of_exec as u64;
+        Ok(())
     }
 }
 

@@ -39,7 +39,7 @@ pub struct GeneralPurposeRegisters {
 }
 
 pub struct SpecialPurposeRegisters {
-    pc: u64,
+    pub pc: u64,
     sp: u64,
 
     o1: u64,
@@ -55,7 +55,7 @@ pub struct SpecialPurposeRegisters {
 }
 
 impl GeneralPurposeRegisters {
-    fn new() -> Self {
+    pub fn new() -> Self {
         GeneralPurposeRegisters {
             r1: 0xDEADBEEF,
             r2: 0xDEADBEEF,
@@ -81,7 +81,7 @@ impl GeneralPurposeRegisters {
     }
 }
 impl SpecialPurposeRegisters {
-    fn new() -> Self {
+    pub fn new() -> Self {
         SpecialPurposeRegisters {
             pc: 0xDEADBEEF,
             sp: 0xDEADBEEF,
@@ -98,7 +98,7 @@ impl SpecialPurposeRegisters {
         }
     }
 }
-enum State {
+pub enum State {
     NoProgramLoaded,
     ProgramLoadedNotStarted,
     ProgramRunning,
@@ -107,11 +107,11 @@ enum State {
     ProgramHalted,
 }
 pub struct Runtime {
-    gpr: GeneralPurposeRegisters,
-    spr: SpecialPurposeRegisters,
-    memory: Memory,
-    state: State,
-    debug: bool,
+    pub gpr: GeneralPurposeRegisters,
+    pub spr: SpecialPurposeRegisters,
+    pub memory: Memory,
+    pub state: State,
+    pub debug: bool,
 }
 /// init a new runtime with program loaded
 impl Runtime {
@@ -168,6 +168,7 @@ impl Runtime {
                 Ok(()) => (),
                 Err(why) => {
                     let error = format!("error in execution :: {}", why);
+                    self.state = State::ProgramFatalError;
                     return Err(error);
                 }
             }
@@ -177,14 +178,21 @@ impl Runtime {
     /// step through one cycle
     pub fn step(&mut self) -> Result<(), String> {
         let opcode = self.get_opcode()?;
-        match opcode {
+        let operation_result = match opcode {
             Opcode::Nop => Inst::nop(self),
             Opcode::Mov => Inst::mov(self),
             Opcode::Load => Inst::load(self),
             Opcode::Store => Inst::store(self),
             Opcode::Add => Inst::add(self),
             Opcode::Sub => Inst::sub(self),
+            Opcode::Mult => Inst::mult(self),
+            Opcode::Div => Inst::div(self),
+            Opcode::End_of_exec_section => Inst::end_of_exec_section(self),
         };
+        match operation_result {
+            Ok(increment) => self.spr.pc += increment as u64,
+            Err(runtime_error) => return Err(format!("runtime error: {}", runtime_error)),
+        }
         Ok(())
     }
 
@@ -264,8 +272,7 @@ impl Runtime {
         head += 8; // pass the datarom length
                    // read exec length
                    // next 8 bytes after datarom length
-        self.memory.start_of_exec = head + data_rom_length as usize;
-        self.spr.pc = self.memory.start_of_exec as u64;
+
         let exec_rom_length = u64::from_le_bytes(match &rom[head..head + 8].try_into() {
             Ok(array) => *array,
             Err(why) => {
@@ -276,8 +283,14 @@ impl Runtime {
         println!("exec_rom_length = {}", exec_rom_length);
         head += 8;
 
+        self.memory.start_of_exec = head + data_rom_length as usize;
+        println!("start_of_exec = {:#x?}", self.memory.start_of_exec);
+
         self.memory.end_of_exec = head + exec_rom_length as usize;
+        println!("end_of_exec = {:#x?}", self.memory.end_of_exec);
         self.memory.rom = rom;
+
+        self.spr.pc = self.memory.start_of_exec as u64;
         self.state = State::ProgramLoadedNotStarted;
         Ok(())
     }
@@ -335,5 +348,18 @@ impl Inst {
     fn sub(runtime: &mut Runtime) -> Result<usize, String> {
         println!("sub");
         Ok(inc_pc(0))
+    }
+    fn mult(runtime: &mut Runtime) -> Result<usize, String> {
+        println!("mult");
+        Ok(inc_pc(0))
+    }
+    fn div(runtime: &mut Runtime) -> Result<usize, String> {
+        println!("div");
+        Ok(inc_pc(0))
+    }
+    fn end_of_exec_section(runtime: &mut Runtime) -> Result<usize, String> {
+        println!("end_of_exec_section");
+        runtime.state = State::ProgramExitedSuccess;
+        Ok(0)
     }
 }
