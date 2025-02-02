@@ -435,7 +435,7 @@ impl Inst {
         let dest =
             runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
         // let src = runtime
-        Ok(inc_pc(0))
+        Ok(inc_pc(operands.1))
     }
     fn store(runtime: &mut Runtime) -> Result<usize, String> {
         println!("store");
@@ -452,7 +452,7 @@ impl Inst {
         let sum =
             runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
         *sum = addend1 + addend2;
-        Ok(inc_pc(0))
+        Ok(inc_pc(operands.1))
     }
     fn sub(runtime: &mut Runtime) -> Result<usize, String> {
         println!("sub");
@@ -465,7 +465,7 @@ impl Inst {
         let difference =
             runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
         *difference = minuend - subtrahend;
-        Ok(inc_pc(0))
+        Ok(inc_pc(operands.1))
     }
     fn mult(runtime: &mut Runtime) -> Result<usize, String> {
         println!("mult");
@@ -478,7 +478,7 @@ impl Inst {
         let result =
             runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
         *result = multiplicand * multipler;
-        Ok(inc_pc(0))
+        Ok(inc_pc(operands.1))
     }
     fn div(runtime: &mut Runtime) -> Result<usize, String> {
         println!("div");
@@ -497,7 +497,7 @@ impl Inst {
             runtime.get_mut_reg(*operands.0.get(1).ok_or("failed to read dest reg")? as usize)?;
         *remainder = dividend % divisor;
 
-        Ok(inc_pc(0))
+        Ok(inc_pc(operands.1))
     }
     fn end_of_exec_section(runtime: &mut Runtime) -> Result<usize, String> {
         println!("end_of_exec_section");

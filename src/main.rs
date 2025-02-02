@@ -4,6 +4,7 @@ use shell::Shell;
 
 // main.rs
 //
+mod assembler;
 mod constant;
 mod cpu;
 mod memory;
