@@ -6,22 +6,22 @@ use crate::constant::{self};
 // memory interaction
 pub type Bytes = Vec<u8>;
 // pub type MemoryAddress = Vec<u8>; // 72bits/9bytes actually
-enum Pool {
+pub enum Pool {
     Rom,
     Ram,
 }
 pub struct MemoryAddress {
-    pool: Pool,
-    address: u64,
+    pub pool: Pool,
+    pub address: u64,
 }
 pub struct Memory {
-    ram: Bytes, // general purpose memory
-    rom: Bytes, // program
-    start_of_exec: usize,
-    end_of_exec: usize,
+    pub ram: Bytes, // general purpose memory
+    pub rom: Bytes, // program
+    pub start_of_exec: usize,
+    pub end_of_exec: usize,
 }
 impl Memory {
-    pub fn new_uninit() -> Self {
+    pub fn new() -> Self {
         Memory {
             ram: vec![],
             rom: vec![],
@@ -29,88 +29,25 @@ impl Memory {
             end_of_exec: 0,
         }
     }
-    pub fn load(binary: &Path) -> Result<Self, String> {
-        // verify signature
-        // locate start and end of exec
-        // mark start of execution section
-        //
 
-        let mut binary_file: File = match File::open(binary) {
-            Ok(file) => file,
-            Err(why) => return Err(why.to_string()),
-        };
-        let mut program_signature_buffer = vec![0; constant::SIGNATURE.len()];
-        match binary_file.read_exact(&mut program_signature_buffer) {
-            Ok(_) => (),
-            Err(why) => {
-                let error = format!("could not read signature :: {}", why);
-                return Err(error);
-            }
-        };
-
-        let program_signature = match String::from_utf8(program_signature_buffer) {
-            Ok(string) => string,
-            Err(why) => {
-                let error = format!("could not convert signature to string :: {}", why);
-                return Err(error);
-            }
-        };
-
-        if constant::SIGNATURE != program_signature {
-            let why = format!(
-                "exec format error: signature not valid, {} != {}",
-                constant::SIGNATURE,
-                program_signature
-            );
-            return Err(why);
-        } else {
-            println!("valid exec format");
+    pub fn byte_slice(&self, start_address: MemoryAddress, size: usize) -> Result<&[u8], String> {
+        let end_address = start_address.address as usize + size;
+        match start_address.pool {
+            Pool::Rom => self
+                .rom
+                .get((start_address.address as usize)..end_address)
+                .ok_or(format!(
+                    "MemoryAccessViolation on rom read request {:#x?}-{:#x?}",
+                    start_address.address, end_address
+                )),
+            Pool::Ram => self
+                .ram
+                .get((start_address.address as usize)..end_address)
+                .ok_or(format!(
+                    "MemoryAccessViolation on rom read request {:#x?}-{:#x?}",
+                    start_address.address, end_address
+                )),
         }
-        let mut rom: Vec<u8> = vec![];
-        match binary_file.read_to_end(&mut rom) {
-            Ok(_) => (),
-            Err(why) => {
-                let error = format!("failed to read file into rom :: {}", why);
-                return Err(error);
-            }
-        };
-
-        let mut head = 0;
-        // read header data -- VVV --
-        //
-        // read data length
-        // first u64 after the signature is size of data section in bytes
-        let data_rom_length = u64::from_le_bytes(match &rom[head..head + 8].try_into() {
-            Ok(array) => *array,
-            Err(why) => {
-                let error = format!("failed to read datarom length :: {}", why);
-                return Err(error);
-            }
-        });
-        head += 8; // pass the datarom length
-                   // read exec length
-                   // next 8 bytes after datarom length
-        let start_of_exec = head + data_rom_length as usize;
-
-        let exec_rom_length = u64::from_le_bytes(match &rom[head..head + 8].try_into() {
-            Ok(array) => *array,
-            Err(why) => {
-                let error = format!("failed to read execrom length :: {}", why);
-                return Err(error);
-            }
-        });
-        head += 8;
-        let end_of_exec = head + exec_rom_length as usize;
-
-        Ok(Memory {
-            ram: vec![],
-            rom,
-            start_of_exec,
-            end_of_exec,
-        })
-    }
-
-    pub fn return_immut(self, address: MemoryAddress) {
-        todo!()
     }
 }
+//(start_address.address as usize)..=size

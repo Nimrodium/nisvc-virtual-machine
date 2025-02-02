@@ -1,10 +1,20 @@
 // cpu.rs
 //
 
-use std::path::Path;
+use std::{fs::File, io::Read, path::Path};
 
-use crate::memory::Memory;
+use crate::{
+    constant::{self, OpcodeSize},
+    memory::{Memory, MemoryAddress, Pool},
+    opcode::Opcode,
+};
 
+enum Data {
+    GeneralRegisters,
+    SpecialRegisters,
+    Ram,
+    Rom,
+}
 pub struct GeneralPurposeRegisters {
     r1: u64,
     r2: u64,
@@ -105,35 +115,35 @@ pub struct Runtime {
 }
 /// init a new runtime with program loaded
 impl Runtime {
-    pub fn new_loaded(binary: &Path, debug: bool) -> Result<Self, String> {
-        let memory = match Memory::load(binary) {
-            Ok(memory) => memory,
-            Err(why) => return Err(why),
-        };
-        let state = State::ProgramLoadedNotStarted;
-        Ok(Runtime {
-            memory,
-            gpr: GeneralPurposeRegisters::new(),
-            spr: SpecialPurposeRegisters::new(),
-            state,
-            debug,
-        })
-    }
+    // pub fn new_loaded(binary: &Path, debug: bool) -> Result<Self, String> {
+    //     let memory = match Memory::load(binary) {
+    //         Ok(memory) => memory,
+    //         Err(why) => return Err(why),
+    //     };
+    //     let state = State::ProgramLoadedNotStarted;
+    //     Ok(Runtime {
+    //         memory,
+    //         gpr: GeneralPurposeRegisters::new(),
+    //         spr: SpecialPurposeRegisters::new(),
+    //         state,
+    //         debug,
+    //     })
+    // }
     /// always successful init runtime with no program loaded
-    pub fn new_unloaded(debug: bool) -> Self {
+    pub fn new(debug: bool) -> Self {
         Runtime {
-            memory: Memory::new_uninit(),
+            memory: Memory::new(),
             gpr: GeneralPurposeRegisters::new(),
             spr: SpecialPurposeRegisters::new(),
             state: State::NoProgramLoaded,
             debug,
         }
     }
-    pub fn load(&mut self, binary: &Path) -> Result<(), String> {
-        self.memory = Memory::load(binary)?;
-        self.state = State::ProgramLoadedNotStarted;
-        Ok(())
-    }
+    // pub fn load(&mut self, binary: &Path) -> Result<(), String> {
+    //     self.memory.load(binary)?;
+    //     self.state = State::ProgramLoadedNotStarted;
+    //     Ok(())
+    // }
 
     /// execute runtime at PC
     pub fn exec(&mut self) -> Result<(), String> {
@@ -148,7 +158,7 @@ impl Runtime {
                 println!("executing...");
             },
         };
-
+        self.state = State::ProgramRunning;
         loop {
             match self.state {
                 State::ProgramRunning => (),
@@ -166,14 +176,164 @@ impl Runtime {
     }
     /// step through one cycle
     pub fn step(&mut self) -> Result<(), String> {
-        todo!()
+        let opcode = self.get_opcode()?;
+        match opcode {
+            Opcode::Nop => Inst::nop(self),
+            Opcode::Mov => Inst::mov(self),
+            Opcode::Load => Inst::load(self),
+            Opcode::Store => Inst::store(self),
+            Opcode::Add => Inst::add(self),
+            Opcode::Sub => Inst::sub(self),
+        };
+        Ok(())
     }
 
     /// dumps state
-    pub fn dump(self) -> String {
+    pub fn dump(&self, data: Data) -> String {
         todo!()
     }
     pub fn throw_runtime_error(self, why: &str) {
         println!("runtime error!! :: {}", why)
+    }
+    pub fn load(&mut self, binary: &Path) -> Result<(), String> {
+        // verify signature
+        // locate start and end of exec
+        // mark start of execution section
+        //
+
+        let mut binary_file: File = match File::open(binary) {
+            Ok(file) => file,
+            Err(why) => return Err(why.to_string()),
+        };
+        let mut program_signature_buffer = vec![0; constant::SIGNATURE.len()];
+        match binary_file.read_exact(&mut program_signature_buffer) {
+            Ok(_) => (),
+            Err(why) => {
+                let error = format!("could not read signature :: {}", why);
+                return Err(error);
+            }
+        };
+
+        let program_signature = match String::from_utf8(program_signature_buffer) {
+            Ok(string) => string,
+            Err(why) => {
+                let error = format!("could not convert signature to string :: {}", why);
+                return Err(error);
+            }
+        };
+
+        if constant::SIGNATURE != program_signature {
+            let why = format!(
+                "exec format error: signature not valid, {} != {}",
+                constant::SIGNATURE,
+                program_signature
+            );
+            return Err(why);
+        } else {
+            println!("valid exec format");
+        }
+        let mut rom: Vec<u8> = vec![];
+        match binary_file.read_to_end(&mut rom) {
+            Ok(_) => (),
+            Err(why) => {
+                let error = format!("failed to read file into rom :: {}", why);
+                return Err(error);
+            }
+        };
+        let header_len = constant::SIGNATURE.len() + (8 * 2);
+        if rom.len() <= header_len {
+            return Err(format!(
+                "{} formatted file has incomplete header",
+                constant::SIGNATURE,
+            ));
+        }
+        let mut head = 0;
+        // read header data -- VVV --
+        //
+        // read data length
+        // first u64 after the signature is size of data section in bytes
+
+        let data_rom_length = u64::from_le_bytes(match &rom[head..head + 8].try_into() {
+            Ok(array) => *array,
+            Err(why) => {
+                let error = format!("failed to read datarom length :: {}", why);
+                return Err(error);
+            }
+        });
+        println!("data_rom_length = {}", data_rom_length);
+        head += 8; // pass the datarom length
+                   // read exec length
+                   // next 8 bytes after datarom length
+        self.memory.start_of_exec = head + data_rom_length as usize;
+        self.spr.pc = self.memory.start_of_exec as u64;
+        let exec_rom_length = u64::from_le_bytes(match &rom[head..head + 8].try_into() {
+            Ok(array) => *array,
+            Err(why) => {
+                let error = format!("failed to read execrom length :: {}", why);
+                return Err(error);
+            }
+        });
+        println!("exec_rom_length = {}", exec_rom_length);
+        head += 8;
+
+        self.memory.end_of_exec = head + exec_rom_length as usize;
+        self.memory.rom = rom;
+        self.state = State::ProgramLoadedNotStarted;
+        Ok(())
+    }
+
+    fn get_opcode(&self) -> Result<Opcode, String> {
+        let opcode_bytes = self.memory.byte_slice(
+            MemoryAddress {
+                pool: Pool::Rom,
+                address: self.spr.pc,
+            },
+            size_of::<OpcodeSize>(),
+        )?;
+        let opcode_code = OpcodeSize::from_le_bytes(match opcode_bytes.try_into() {
+            Ok(array) => array,
+            Err(why) => {
+                let error = format!("failed to read datarom length :: {}", why);
+                return Err(error);
+            }
+        });
+        match opcode_code.try_into() {
+            Ok(opcode) => Ok(opcode),
+            Err(()) => return Err(format!("opcode {:#x?} not recognized", opcode_code)),
+        }
+    }
+}
+
+fn inc_pc(bytes: usize) -> usize {
+    let inc = size_of::<OpcodeSize>();
+    inc + bytes
+}
+struct Inst;
+// return of all instructions are Ok(increment program counter),Err(instruction Error)
+impl Inst {
+    fn nop(runtime: &mut Runtime) -> Result<usize, String> {
+        println!("nop");
+
+        Ok(inc_pc(0))
+    }
+    fn mov(runtime: &mut Runtime) -> Result<usize, String> {
+        println!("mov");
+        Ok(inc_pc(0))
+    }
+    fn load(runtime: &mut Runtime) -> Result<usize, String> {
+        println!("load");
+        Ok(inc_pc(0))
+    }
+    fn store(runtime: &mut Runtime) -> Result<usize, String> {
+        println!("store");
+        Ok(inc_pc(0))
+    }
+    fn add(runtime: &mut Runtime) -> Result<usize, String> {
+        println!("add");
+        Ok(inc_pc(0))
+    }
+    fn sub(runtime: &mut Runtime) -> Result<usize, String> {
+        println!("sub");
+        Ok(inc_pc(0))
     }
 }

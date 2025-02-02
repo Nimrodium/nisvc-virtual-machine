@@ -5,7 +5,6 @@ use std::{
     path::Path,
     process::exit,
 };
-
 // shell mode
 pub struct Shell {
     runtime: Runtime,
@@ -14,26 +13,15 @@ pub struct Shell {
 
 impl Shell {
     /// constructor
-    pub fn new(binary: Option<&Path>) -> Result<Self, String> {
+    pub fn new() -> Result<Self, String> {
         let debug = true;
-        let mut runtime = match binary {
-            Some(path) => match Runtime::new_loaded(path, debug) {
-                Ok(runtime) => runtime,
-                Err(why) => {
-                    println!(
-                        "failed to load binary, empty runtime loaded instead :: {}",
-                        why
-                    );
-                    Runtime::new_unloaded(debug)
-                }
-            },
-            None => Runtime::new_unloaded(debug),
-        };
+        let mut runtime = Runtime::new(debug);
+
         println!(
             ":: NIMCODE RUNTIME SHELL VERSION {} ::",
             constant::RUNTIME_VER
         );
-        let mut readline = match DefaultEditor::new() {
+        let readline = match DefaultEditor::new() {
             Ok(readline) => readline,
             Err(why) => return Err(why.to_string()),
         };
@@ -79,6 +67,7 @@ impl Shell {
             "exit" => self.cmd_exit(),
             "louis" => Ok(println!("louised")),
             "load" => self.cmd_load(cmd),
+            "exec" => self.cmd_exec(cmd),
             "" => Ok(()),
             _ => Err(format!("unrecognized command [{}]", command_word)),
         }
@@ -93,17 +82,15 @@ impl Shell {
             None => return Err("missing file in command".to_string()),
         });
 
-        self.runtime.load(binary)
+        match self.runtime.load(binary) {
+            Ok(()) => Ok(println!("successfully loaded binary file")),
+            Err(why) => return Err(why),
+        }
+    }
+    fn cmd_exec(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+        self.runtime.exec()
     }
 }
 
 pub struct Commands;
-impl Commands {
-    fn load(runtime: &mut Runtime) {}
-    fn step(runtime: &mut Runtime) {
-        match runtime.step() {
-            Ok(()) => (),
-            Err(runtime_err) => println!("runtime error: {}", runtime_err),
-        }
-    }
-}
+impl Commands {}

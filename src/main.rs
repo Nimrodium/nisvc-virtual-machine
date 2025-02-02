@@ -10,7 +10,7 @@ mod memory;
 mod opcode;
 mod shell;
 fn main() {
-    let mut shell = match Shell::new(None) {
+    let mut shell = match Shell::new() {
         Ok(shell) => shell,
         Err(why) => {
             println!("failed to start shell instance :: {}", why);
