@@ -115,21 +115,6 @@ pub struct Runtime {
 }
 /// init a new runtime with program loaded
 impl Runtime {
-    // pub fn new_loaded(binary: &Path, debug: bool) -> Result<Self, String> {
-    //     let memory = match Memory::load(binary) {
-    //         Ok(memory) => memory,
-    //         Err(why) => return Err(why),
-    //     };
-    //     let state = State::ProgramLoadedNotStarted;
-    //     Ok(Runtime {
-    //         memory,
-    //         gpr: GeneralPurposeRegisters::new(),
-    //         spr: SpecialPurposeRegisters::new(),
-    //         state,
-    //         debug,
-    //     })
-    // }
-    /// always successful init runtime with no program loaded
     pub fn new(debug: bool) -> Self {
         Runtime {
             memory: Memory::new(),
@@ -139,12 +124,82 @@ impl Runtime {
             debug,
         }
     }
-    // pub fn load(&mut self, binary: &Path) -> Result<(), String> {
-    //     self.memory.load(binary)?;
-    //     self.state = State::ProgramLoadedNotStarted;
-    //     Ok(())
-    // }
-
+    /// returns mutable reference to a register
+    fn get_mut_reg(&mut self, reg: usize) -> Result<&mut u64, String> {
+        match reg {
+            1 => Ok(&mut self.gpr.r1),
+            2 => Ok(&mut self.gpr.r2),
+            3 => Ok(&mut self.gpr.r3),
+            4 => Ok(&mut self.gpr.r4),
+            5 => Ok(&mut self.gpr.r5),
+            6 => Ok(&mut self.gpr.r6),
+            7 => Ok(&mut self.gpr.r7),
+            8 => Ok(&mut self.gpr.r8),
+            9 => Ok(&mut self.gpr.r9),
+            10 => Ok(&mut self.gpr.r10),
+            11 => Ok(&mut self.gpr.r11),
+            12 => Ok(&mut self.gpr.r12),
+            13 => Ok(&mut self.gpr.r13),
+            14 => Ok(&mut self.gpr.r14),
+            15 => Ok(&mut self.gpr.r15),
+            16 => Ok(&mut self.gpr.r16),
+            17 => Ok(&mut self.gpr.r17),
+            18 => Ok(&mut self.gpr.r18),
+            19 => Ok(&mut self.gpr.r19),
+            20 => Ok(&mut self.gpr.r20),
+            21 => Ok(&mut self.spr.pc),
+            22 => Ok(&mut self.spr.sp),
+            23 => Ok(&mut self.spr.o1),
+            24 => Ok(&mut self.spr.o2),
+            25 => Ok(&mut self.spr.o3),
+            26 => Ok(&mut self.spr.o4),
+            27 => Ok(&mut self.spr.o5),
+            28 => Ok(&mut self.spr.o6),
+            29 => Ok(&mut self.spr.o7),
+            30 => Ok(&mut self.spr.o8),
+            31 => Ok(&mut self.spr.o9),
+            32 => Ok(&mut self.spr.o10),
+            _ => Err(format!("invalid register code [{reg:#x?}]")),
+        }
+    }
+    /// returns the value inside register
+    fn get_reg(&self, reg: usize) -> Result<u64, String> {
+        match reg {
+            1 => Ok(self.gpr.r1),
+            2 => Ok(self.gpr.r2),
+            3 => Ok(self.gpr.r3),
+            4 => Ok(self.gpr.r4),
+            5 => Ok(self.gpr.r5),
+            6 => Ok(self.gpr.r6),
+            7 => Ok(self.gpr.r7),
+            8 => Ok(self.gpr.r8),
+            9 => Ok(self.gpr.r9),
+            10 => Ok(self.gpr.r10),
+            11 => Ok(self.gpr.r11),
+            12 => Ok(self.gpr.r12),
+            13 => Ok(self.gpr.r13),
+            14 => Ok(self.gpr.r14),
+            15 => Ok(self.gpr.r15),
+            16 => Ok(self.gpr.r16),
+            17 => Ok(self.gpr.r17),
+            18 => Ok(self.gpr.r18),
+            19 => Ok(self.gpr.r19),
+            20 => Ok(self.gpr.r20),
+            21 => Ok(self.spr.pc),
+            22 => Ok(self.spr.sp),
+            23 => Ok(self.spr.o1),
+            24 => Ok(self.spr.o2),
+            25 => Ok(self.spr.o3),
+            26 => Ok(self.spr.o4),
+            27 => Ok(self.spr.o5),
+            28 => Ok(self.spr.o6),
+            29 => Ok(self.spr.o7),
+            30 => Ok(self.spr.o8),
+            31 => Ok(self.spr.o9),
+            32 => Ok(self.spr.o10),
+            _ => Err(format!("invalid register code [{reg:#x?}]")),
+        }
+    }
     /// execute runtime at PC
     pub fn exec(&mut self) -> Result<(), String> {
         // program loop
@@ -177,7 +232,7 @@ impl Runtime {
     }
     /// step through one cycle
     pub fn step(&mut self) -> Result<(), String> {
-        let opcode = self.get_opcode()?;
+        let opcode = self.decode_opcode()?;
         let operation_result = match opcode {
             Opcode::Nop => Inst::nop(self),
             Opcode::Mov => Inst::mov(self),
@@ -295,9 +350,9 @@ impl Runtime {
         Ok(())
     }
 
-    fn get_opcode(&self) -> Result<Opcode, String> {
+    fn decode_opcode(&self) -> Result<Opcode, String> {
         let opcode_bytes = self.memory.byte_slice(
-            MemoryAddress {
+            &MemoryAddress {
                 pool: Pool::Rom,
                 address: self.spr.pc,
             },
@@ -315,8 +370,33 @@ impl Runtime {
             Err(()) => return Err(format!("opcode {:#x?} not recognized", opcode_code)),
         }
     }
+    // .0 = operands
+    // .1 = read
+    // Err
+    fn decode_operands(&self, expected: usize) -> Result<(Vec<u64>, usize), String> {
+        let read_bytes = 8;
+        let mut operands: Vec<u64> = Vec::with_capacity(expected);
+        let mut address = MemoryAddress {
+            pool: Pool::Rom,
+            address: self.spr.pc,
+        };
+        for _ in 0..expected {
+            // let operand_u8: &[u8] = ;
+            let operand_u64: u64 = u64::from_le_bytes(
+                match self.memory.byte_slice(&address, read_bytes)?.try_into() {
+                    Ok(array) => array,
+                    Err(why) => {
+                        let error = format!("failed to read operand :: {}", why);
+                        return Err(error);
+                    }
+                },
+            );
+            operands.push(operand_u64);
+            address.address += read_bytes as u64;
+        }
+        Ok((operands, (address.address - self.spr.pc) as usize))
+    }
 }
-
 fn inc_pc(bytes: usize) -> usize {
     let inc = size_of::<OpcodeSize>();
     inc + bytes
@@ -331,10 +411,30 @@ impl Inst {
     }
     fn mov(runtime: &mut Runtime) -> Result<usize, String> {
         println!("mov");
-        Ok(inc_pc(0))
+        let operands = runtime.decode_operands(2)?;
+
+        let src = runtime.get_reg(*operands.0.get(1).ok_or("failed to read dest reg")? as usize)?;
+        let dest =
+            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
+
+        *dest = src;
+        Ok(inc_pc(operands.1))
+    }
+    fn movi(runtime: &mut Runtime) -> Result<usize, String> {
+        println!("movi");
+        let operands = runtime.decode_operands(2)?;
+        let dest =
+            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
+        *dest = *operands.0.get(1).ok_or("failed to read src imm")? as u64;
+        Ok(inc_pc(operands.1))
     }
     fn load(runtime: &mut Runtime) -> Result<usize, String> {
         println!("load");
+
+        let operands = runtime.decode_operands(2)?;
+        let dest =
+            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
+        // let src = runtime
         Ok(inc_pc(0))
     }
     fn store(runtime: &mut Runtime) -> Result<usize, String> {
@@ -343,18 +443,60 @@ impl Inst {
     }
     fn add(runtime: &mut Runtime) -> Result<usize, String> {
         println!("add");
+        let operands = runtime.decode_operands(3)?;
+
+        let addend1 =
+            runtime.get_reg(*operands.0.get(1).ok_or("failed to read dest reg")? as usize)?;
+        let addend2 =
+            runtime.get_reg(*operands.0.get(2).ok_or("failed to read dest reg")? as usize)?;
+        let sum =
+            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
+        *sum = addend1 + addend2;
         Ok(inc_pc(0))
     }
     fn sub(runtime: &mut Runtime) -> Result<usize, String> {
         println!("sub");
+        let operands = runtime.decode_operands(3)?;
+
+        let minuend =
+            runtime.get_reg(*operands.0.get(1).ok_or("failed to read dest reg")? as usize)?;
+        let subtrahend =
+            runtime.get_reg(*operands.0.get(2).ok_or("failed to read dest reg")? as usize)?;
+        let difference =
+            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
+        *difference = minuend - subtrahend;
         Ok(inc_pc(0))
     }
     fn mult(runtime: &mut Runtime) -> Result<usize, String> {
         println!("mult");
+        let operands = runtime.decode_operands(3)?;
+
+        let multiplicand =
+            runtime.get_reg(*operands.0.get(1).ok_or("failed to read dest reg")? as usize)?;
+        let multipler =
+            runtime.get_reg(*operands.0.get(2).ok_or("failed to read dest reg")? as usize)?;
+        let result =
+            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
+        *result = multiplicand * multipler;
         Ok(inc_pc(0))
     }
     fn div(runtime: &mut Runtime) -> Result<usize, String> {
         println!("div");
+        let operands = runtime.decode_operands(4)?;
+
+        let dividend =
+            runtime.get_reg(*operands.0.get(2).ok_or("failed to read dest reg")? as usize)?;
+        let divisor =
+            runtime.get_reg(*operands.0.get(3).ok_or("failed to read dest reg")? as usize)?;
+
+        let qotient =
+            runtime.get_mut_reg(*operands.0.get(0).ok_or("failed to read dest reg")? as usize)?;
+        *qotient = dividend / divisor;
+
+        let remainder =
+            runtime.get_mut_reg(*operands.0.get(1).ok_or("failed to read dest reg")? as usize)?;
+        *remainder = dividend % divisor;
+
         Ok(inc_pc(0))
     }
     fn end_of_exec_section(runtime: &mut Runtime) -> Result<usize, String> {

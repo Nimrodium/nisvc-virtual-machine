@@ -13,7 +13,7 @@ fn main() {
     let mut shell = match Shell::new() {
         Ok(shell) => shell,
         Err(why) => {
-            println!("failed to start shell instance :: {}", why);
+            println!("failed to initalize shell instance :: {}", why);
             exit(0)
         }
     };

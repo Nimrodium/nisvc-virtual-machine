@@ -30,7 +30,7 @@ impl Memory {
         }
     }
 
-    pub fn byte_slice(&self, start_address: MemoryAddress, size: usize) -> Result<&[u8], String> {
+    pub fn byte_slice(&self, start_address: &MemoryAddress, size: usize) -> Result<&[u8], String> {
         let end_address = start_address.address as usize + size;
         match start_address.pool {
             Pool::Rom => self
