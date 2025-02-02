@@ -103,28 +103,14 @@ pub struct Runtime {
     state: State,
     debug: bool,
 }
-/// init a new runtime with option to preload a binary file, if no file provided
+/// init a new runtime with program loaded
 impl Runtime {
-    pub fn new(binary: Option<&Path>, debug: bool) -> Result<Self, String> {
-        let memory;
-        let state;
-        match binary {
-            Some(path) => {
-                memory = match Memory::load(path) {
-                    Ok(memory) => memory,
-                    Err(why) => {
-                        let error = format!("failed to load binary :: {}", why);
-                        return Err(error);
-                    }
-                };
-                state = State::ProgramLoadedNotStarted
-            }
-            None => {
-                memory = Memory::new_uninit();
-                state = State::NoProgramLoaded
-            }
-        }
-        // let memory = Memory::new(binary)?;
+    pub fn new_loaded(binary: &Path, debug: bool) -> Result<Self, String> {
+        let memory = match Memory::load(binary) {
+            Ok(memory) => memory,
+            Err(why) => return Err(why),
+        };
+        let state = State::ProgramLoadedNotStarted;
         Ok(Runtime {
             memory,
             gpr: GeneralPurposeRegisters::new(),
@@ -133,6 +119,22 @@ impl Runtime {
             debug,
         })
     }
+    /// always successful init runtime with no program loaded
+    pub fn new_unloaded(debug: bool) -> Self {
+        Runtime {
+            memory: Memory::new_uninit(),
+            gpr: GeneralPurposeRegisters::new(),
+            spr: SpecialPurposeRegisters::new(),
+            state: State::NoProgramLoaded,
+            debug,
+        }
+    }
+    pub fn load(&mut self, binary: &Path) -> Result<(), String> {
+        self.memory = Memory::load(binary)?;
+        self.state = State::ProgramLoadedNotStarted;
+        Ok(())
+    }
+
     /// execute runtime at PC
     pub fn exec(&mut self) -> Result<(), String> {
         // program loop
