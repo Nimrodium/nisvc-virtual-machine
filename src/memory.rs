@@ -8,7 +8,7 @@ pub struct Memory {
     pub program: Bytes,
     pub ram: Bytes,
     pub mmio_base: u64,
-    pub rom_base: u64,
+    pub program_base: u64,
     // pub rom_exec_base: u64,
     pub ram_base: u64,
 }
@@ -19,7 +19,7 @@ impl Memory {
             program: vec![],
             ram: vec![],
             mmio_base: 0, // always zero unless i put something under mmio
-            rom_base: constant::MMIO_ADDRESS_SPACE as u64, // change this when i actually add an mmio system
+            program_base: constant::MMIO_ADDRESS_SPACE as u64, // change this when i actually add an mmio system
             // always ZERO now. // rom_exec_base: 0,                              // start of program section
             ram_base: 0, // start of ram aka rom.len()-1
         }
@@ -53,12 +53,12 @@ impl Memory {
 
     /// returns byte at address
     pub fn mmu_read(&self, address: u64) -> Result<u8, String> {
-        if address < self.rom_base {
+        if address < self.program_base {
             // mmio address
             self.mmio_read_handler(address)
         } else if address < self.ram_base {
             // rom address
-            let physical_address = address - self.rom_base;
+            let physical_address = address - self.program_base;
             self.read(physical_address, true)
         } else {
             // ram address
@@ -68,7 +68,7 @@ impl Memory {
     }
     /// writes byte to
     pub fn mmu_write(&mut self, address: u64, byte: u8) -> Result<(), String> {
-        if address < self.rom_base {
+        if address < self.program_base {
             // mmio address
             self.mmio_write_handler(address, byte)
         } else if address < self.ram_base {

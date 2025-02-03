@@ -36,12 +36,13 @@ decode!(
     pub enum Opcode {
         Nop = 0x00 as isize,
         Mov = 0x01 as isize,
-        Load = 0x02 as isize,
-        Store = 0x03 as isize,
-        Add = 0x04 as isize,
-        Sub = 0x05 as isize,
-        Mult = 0x06 as isize,
-        Div = 0x07 as isize,
+        Movim = 0x02 as isize,
+        Load = 0x03 as isize,
+        Store = 0x04 as isize,
+        Add = 0x05 as isize,
+        Sub = 0x06 as isize,
+        Mult = 0x07 as isize,
+        Div = 0x08 as isize,
 
         End_of_exec_section = 0xFFFF as isize,
     }
