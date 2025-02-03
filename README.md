@@ -2,8 +2,6 @@
 
 A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose registers, 12 special registers, and MMIO support.
 
-
-
 ## Architecture Specifications
   - Endianness: Little-endian
   - Register Width: 64 bits
@@ -29,11 +27,11 @@ A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose regist
   - `exec`
     > executes the program
   - `pr-reg <register>`
-    > prints <register> in decimal and hexidecimal 
+    > prints <register> in decimal and hexidecimal
   - `dump <program/ram>`
     > dumps program rom or data ram
   - `reset`
-    > resets program to be executed again 
+    > resets program to be executed again
   - `exit`
     > exits shell
 # instruction Set
