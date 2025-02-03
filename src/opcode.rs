@@ -34,16 +34,27 @@ macro_rules! decode {
 decode!(
     #[derive(Debug)]
     pub enum Opcode {
+        // data loading and storing
         Nop = 0x00 as isize,
         Mov = 0x01 as isize,
         Movim = 0x02 as isize,
         Load = 0x03 as isize,
         Store = 0x04 as isize,
+        // arithmetic
         Add = 0x05 as isize,
         Sub = 0x06 as isize,
         Mult = 0x07 as isize,
-        Div = 0x08 as isize,
+        Div = 0x08 as isize, // unimplemented at the moment
 
+        // bitwise
+        Or = 0x09 as isize,
+        Xor = 0x0a as isize,
+        And = 0x0b as isize,
+        Not = 0x0c as isize,
+        Shl = 0x0d as isize,
+        Shr = 0x0e as isize,
+
+        // special
         End_of_exec_section = 0xFFFF as isize,
     }
 );

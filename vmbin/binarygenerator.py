@@ -42,4 +42,45 @@ add_test = [
 # r3 = 5
 ]
 
-assemble("addtest.bin",data,add_test)
+arithmetic_test = [
+        # movim r1,2
+        # movim r2,3
+        # add r3,r1,r2
+        # sub r4,r2,r1
+        # mult r5,r1,r2
+
+        0x02,0x00, # movim
+        0x01,0x00, # r1
+        0x01,0x02, # 1b#2
+
+        0x02,0x00, # movim
+        0x02,0x00, # r2
+        0x01,0x03, # 1b#3
+
+        0x05,0x00, # add
+        0x03,0x00, # r3
+        0x01,0x00, # r1
+        0x02,0x00, # r2
+
+        0x06,0x00, # sub
+        0x04,0x00, # r4
+        0x02,0x00, # r2
+        0x01,0x00, # r1
+
+        0x07,0x00, # mult
+        0x05,0x00, # r5
+        0x01,0x00, # r1
+        0x02,0x00, # r2
+        0xff,0xff, # end
+
+    # output
+    # r1 = 2
+    # r2 = 3
+    # r3 = 5
+    # r4 = 1
+    # r5 = 6
+
+]
+
+
+assemble("arith.bin",data,arithmetic_test)

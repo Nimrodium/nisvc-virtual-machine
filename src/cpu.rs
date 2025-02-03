@@ -251,6 +251,12 @@ impl Runtime {
             Opcode::Mult => self.op_mult(),
             Opcode::Div => self.op_div(),
             Opcode::End_of_exec_section => self.op_end_of_exec_section(),
+            Opcode::Or => todo!(),
+            Opcode::Xor => todo!(),
+            Opcode::And => todo!(),
+            Opcode::Not => todo!(),
+            Opcode::Shl => todo!(),
+            Opcode::Shr => todo!(),
         };
         match operation_result {
             Ok(increment) => self.spr.pc += increment as u64,
@@ -379,7 +385,7 @@ impl Runtime {
         let opcode_code = OpcodeSize::from_le_bytes(match opcode_bytes.try_into() {
             Ok(array) => array,
             Err(why) => {
-                let error = format!("failed to read datarom length :: {:?}", why);
+                let error = format!("failed to rezad datarom length :: {:?}", why);
                 return Err(error);
             }
         });
@@ -390,6 +396,47 @@ impl Runtime {
             }
             Err(()) => return Err(format!("opcode {:#x?} not recognized", opcode_code)),
         }
+    }
+    fn dest_src1_src2_format_decode(&mut self) -> Result<(&mut u64, u64, u64, usize), String> {
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let src1 = self.get_reg(
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2]
+                .to_vec(),
+        )?;
+        let src2 = self.get_reg(
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3]
+                .to_vec(),
+        )?; // 2+(2*2)..2+(2*3) 6..9
+        let dest = self.get_mut_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        Ok((dest, src1, src2, bytes_read))
+    }
+    fn extract_first_operand_as_register_mut(
+        &mut self,
+        bytes: &Vec<u8>,
+    ) -> Result<&mut u64, String> {
+        let first_register = self.get_mut_reg(
+            bytes[constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        Ok(first_register)
+    }
+    fn dest_src_format_decode(&mut self) -> Result<(&mut u64, u64, usize), String> {
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let src = self.get_reg(
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2]
+                .to_vec(),
+        )?;
+        let dest = self.extract_first_operand_as_register_mut(&operand_bytes)?;
+        Ok((dest, src, bytes_read))
     }
 }
 // converts a vector of bytes into a u64 and pads if theres not enough errors if too many bytes are passed
@@ -513,37 +560,57 @@ impl Runtime {
     }
 
     fn op_add(&mut self) -> Result<usize, String> {
-        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3;
-        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
-        let addend1 = self.get_reg(
-            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
-                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2]
-                .to_vec(),
-        )?;
-        let addend2 = self.get_reg(
-            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
-                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3]
-                .to_vec(),
-        )?; // 2+(2*2)..2+(2*3) 6..9
-        let sum = self.get_mut_reg(
-            operand_bytes
-                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
-                .to_vec(),
-        )?;
+        let (sum, addend1, addend2, bytes_read) = self.dest_src1_src2_format_decode()?;
         *sum = addend1 + addend2;
         Ok(bytes_read)
     }
 
     fn op_sub(&mut self) -> Result<usize, String> {
-        todo!()
+        let (difference, minuend, subtrahend, bytes_read) = self.dest_src1_src2_format_decode()?;
+        *difference = minuend - subtrahend;
+        Ok(bytes_read)
     }
 
     fn op_mult(&mut self) -> Result<usize, String> {
-        todo!()
+        let (result, multiplier, multiplicland, bytes_read) =
+            self.dest_src1_src2_format_decode()?;
+        *result = multiplier * multiplicland;
+        Ok(bytes_read)
     }
 
     fn op_div(&mut self) -> Result<usize, String> {
+        let (quotient, dividend, divisor, bytes_read) = self.dest_src1_src2_format_decode()?;
         todo!()
+    }
+    fn op_or(&mut self) -> Result<usize, String> {
+        let (result, byte1, byte2, bytes_read) = self.dest_src1_src2_format_decode()?;
+        *result = byte1 | byte2;
+        Ok(bytes_read)
+    }
+    fn op_xor(&mut self) -> Result<usize, String> {
+        let (result, byte1, byte2, bytes_read) = self.dest_src1_src2_format_decode()?;
+        *result = byte1 ^ byte2;
+        Ok(bytes_read)
+    }
+    fn op_and(&mut self) -> Result<usize, String> {
+        let (result, byte1, byte2, bytes_read) = self.dest_src1_src2_format_decode()?;
+        *result = byte1 & byte2;
+        Ok(bytes_read)
+    }
+    fn op_not(&mut self) -> Result<usize, String> {
+        let (result, byte, bytes_read) = self.dest_src_format_decode()?;
+        *result = !byte;
+        Ok(bytes_read)
+    }
+    fn op_shl(&mut self) -> Result<usize, String> {
+        let (result, byte1, amount, bytes_read) = self.dest_src1_src2_format_decode()?;
+        *result = byte1 << amount;
+        Ok(bytes_read)
+    }
+    fn op_shr(&mut self) -> Result<usize, String> {
+        let (result, byte1, amount, bytes_read) = self.dest_src1_src2_format_decode()?;
+        *result = byte1 >> amount;
+        Ok(bytes_read)
     }
     fn op_end_of_exec_section(&mut self) -> Result<usize, String> {
         println!("end_of_exec_section");
