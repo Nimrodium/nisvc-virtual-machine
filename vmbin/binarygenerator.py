@@ -1,3 +1,4 @@
+# simple nimcode binary generator
 def assemble(name:str,data:list[int],program:list[int]):
     with open(name, "wb") as f:
         # Write signature
