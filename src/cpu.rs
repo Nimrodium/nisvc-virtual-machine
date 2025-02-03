@@ -4,7 +4,7 @@
 use std::{fs::File, io::Read, path::Path};
 
 use crate::{
-    constant::{self, OpcodeSize, RegisterSize},
+    constant::{self, OpcodeSize, RegisterSize, OPCODE_BYTES},
     memory::Memory,
     opcode::Opcode,
 };
@@ -507,13 +507,31 @@ impl Runtime {
         )?; // 2+(2*2).. 6..14
         let src =
             self.get_reg(operand_bytes[constant::OPCODE_BYTES..constant::REGISTER_BYTES].to_vec())?; // 0..2
-        let src_bytes = u64::to_le_bytes(src);
+        let src_bytes = u64::to_le_bytes(src); // need to then trunicate src_bytes by size
         self.memory.write_bytes(address, &src_bytes)?;
         Ok(bytes_read)
     }
 
     fn op_add(&mut self) -> Result<usize, String> {
-        todo!()
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let addend1 = self.get_reg(
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2]
+                .to_vec(),
+        )?;
+        let addend2 = self.get_reg(
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3]
+                .to_vec(),
+        )?; // 2+(2*2)..2+(2*3) 6..9
+        let sum = self.get_mut_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        *sum = addend1 + addend2;
+        Ok(bytes_read)
     }
 
     fn op_sub(&mut self) -> Result<usize, String> {
