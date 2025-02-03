@@ -5,7 +5,7 @@ use std::{fs::File, io::Read, path::Path};
 
 use crate::{
     constant::{self, OpcodeSize, RegisterSize},
-    memory::{Memory, MemoryAddress, Pool},
+    memory::Memory,
     opcode::Opcode,
 };
 
@@ -247,16 +247,17 @@ impl Runtime {
     /// step through one cycle
     pub fn step(&mut self) -> Result<(), String> {
         let opcode = self.decode_opcode()?;
+
         let operation_result = match opcode {
-            Opcode::Nop => Inst::nop(self),
-            Opcode::Mov => Inst::mov(self),
-            Opcode::Load => Inst::load(self),
-            Opcode::Store => Inst::store(self),
-            Opcode::Add => Inst::add(self),
-            Opcode::Sub => Inst::sub(self),
-            Opcode::Mult => Inst::mult(self),
-            Opcode::Div => Inst::div(self),
-            Opcode::End_of_exec_section => Inst::end_of_exec_section(self),
+            Opcode::Nop => self.nop(),
+            Opcode::Mov => self.op_mov(),
+            Opcode::Load => self.op_load(),
+            Opcode::Store => self.op_store(),
+            Opcode::Add => self.op_add(),
+            Opcode::Sub => self.op_sub(),
+            Opcode::Mult => self.op_mult(),
+            Opcode::Div => self.op_div(),
+            Opcode::End_of_exec_section => self.op_end_of_exec_section(),
         };
         match operation_result {
             Ok(increment) => self.spr.pc += increment as u64,
@@ -282,6 +283,7 @@ impl Runtime {
             Ok(file) => file,
             Err(why) => return Err(why.to_string()),
         };
+
         let mut program_signature_buffer = vec![0; constant::SIGNATURE.len()];
         match binary_file.read_exact(&mut program_signature_buffer) {
             Ok(_) => (),
@@ -309,8 +311,11 @@ impl Runtime {
         } else {
             println!("valid exec format");
         }
-        let mut rom: Vec<u8> = vec![];
-        match binary_file.read_to_end(&mut rom) {
+
+        // signature verified -- gonna move this to after loading into memory
+
+        let mut binary_image: Vec<u8> = vec![];
+        match binary_file.read_to_end(&mut binary_image) {
             Ok(_) => (),
             Err(why) => {
                 let error = format!("failed to read file into rom :: {}", why);
@@ -318,19 +323,22 @@ impl Runtime {
             }
         };
         let header_len = constant::SIGNATURE.len() + (8 * 2);
-        if rom.len() <= header_len {
+        if binary_image.len() <= header_len {
             return Err(format!(
                 "{} formatted file has incomplete header",
                 constant::SIGNATURE,
             ));
         }
+
+        // image loaded into memory and verified to have a full header
+
         let mut head = 0;
         // read header data -- VVV --
         //
         // read data length
         // first u64 after the signature is size of data section in bytes
 
-        let data_rom_length = u64::from_le_bytes(match &rom[head..head + 8].try_into() {
+        let data_rom_length = u64::from_le_bytes(match &binary_image[head..head + 8].try_into() {
             Ok(array) => *array,
             Err(why) => {
                 let error = format!("failed to read datarom length :: {}", why);
@@ -342,40 +350,41 @@ impl Runtime {
                    // read exec length
                    // next 8 bytes after datarom length
 
-        let exec_rom_length = u64::from_le_bytes(match &rom[head..head + 8].try_into() {
+        let program_length = u64::from_le_bytes(match &binary_image[head..head + 8].try_into() {
             Ok(array) => *array,
             Err(why) => {
                 let error = format!("failed to read execrom length :: {}", why);
                 return Err(error);
             }
         });
-        println!("exec_rom_length = {}", exec_rom_length);
         head += 8;
+        // data image and program image length u64s read successfully
 
-        self.memory.start_of_exec = head + data_rom_length as usize;
-        println!("start_of_exec = {:#x?}", self.memory.start_of_exec);
+        println!("data_length/initram_size = {}", data_rom_length);
+        println!("program_length = {}", program_length);
+        println!("rom_base = {:#x?}", self.memory.rom_base);
+        println!("ram_base = {:#x?}", self.memory.ram_base);
 
-        self.memory.end_of_exec = head + exec_rom_length as usize;
-        println!("end_of_exec = {:#x?}", self.memory.end_of_exec);
-        self.memory.rom = rom;
+        self.memory.program = binary_image[head + data_rom_length as usize
+            ..head + data_rom_length as usize + program_length as usize]
+            .to_vec();
+        self.memory.ram = binary_image[head..head + data_rom_length as usize].to_vec();
+        // program and ram now loaded
 
-        self.spr.pc = self.memory.start_of_exec as u64;
+        self.memory.ram_base = constant::MMIO_ADDRESS_SPACE as u64 + program_length; // program/ram address boundary
+        self.spr.pc = 0;
         self.state = State::ProgramLoadedNotStarted;
         Ok(())
     }
 
     fn decode_opcode(&self) -> Result<Opcode, String> {
-        let opcode_bytes = self.memory.byte_slice(
-            &MemoryAddress {
-                pool: Pool::Rom,
-                address: self.spr.pc,
-            },
-            size_of::<OpcodeSize>(),
-        )?;
+        let opcode_bytes = self
+            .memory
+            .read_bytes(self.spr.pc, constant::OPCODE_BYTES)?;
         let opcode_code = OpcodeSize::from_le_bytes(match opcode_bytes.try_into() {
             Ok(array) => array,
             Err(why) => {
-                let error = format!("failed to read datarom length :: {}", why);
+                let error = format!("failed to read datarom length :: {:?}", why);
                 return Err(error);
             }
         });
@@ -384,78 +393,95 @@ impl Runtime {
             Err(()) => return Err(format!("opcode {:#x?} not recognized", opcode_code)),
         }
     }
-    // .0 = operands
-    // .1 = read
-    // Err
-
-    fn fetch_operand_bytes(&self, bytes: usize) -> Result<Vec<u8>, String> {
-        let address = MemoryAddress {
-            pool: Pool::Rom,
-            address: self.spr.pc,
-        };
-        let operand_bytes = self.memory.byte_slice(&address, bytes)?.to_vec();
-        Ok(operand_bytes)
-    }
-
-    fn decode_operands(&self, expected: usize) -> Result<(Vec<u64>, usize), String> {
-        let read_bytes = 8;
-        let mut operands: Vec<u64> = Vec::with_capacity(expected);
-        let mut address = MemoryAddress {
-            pool: Pool::Rom,
-            address: self.spr.pc,
-        };
-        for _ in 0..expected {
-            // let operand_u8: &[u8] = ;
-            let operand_u64: u64 = u64::from_le_bytes(
-                match self.memory.byte_slice(&address, read_bytes)?.try_into() {
-                    Ok(array) => array,
-                    Err(why) => {
-                        let error = format!("failed to read operand :: {}", why);
-                        return Err(error);
-                    }
-                },
-            );
-            operands.push(operand_u64);
-            address.address += read_bytes as u64;
-        }
-        Ok((operands, (address.address - self.spr.pc) as usize))
-    }
-}
-fn inc_pc(bytes: usize) -> usize {
-    let inc = size_of::<OpcodeSize>();
-    inc + bytes
 }
 
 // return of all instructions are Ok(increment program counter),Err(instruction Error)
 impl Runtime {
-    fn nop(runtime: &mut Runtime) -> Result<usize, String> {
+    fn nop(&self) -> Result<usize, String> {
         println!("nop");
 
-        Ok(inc_pc(0))
+        Ok(constant::OPCODE_BYTES)
     }
 
-    fn mov(&mut self) -> Result<usize, String> {
-        let operand_bytes = self.fetch_operand_bytes(constant::REGISTER_BYTES * 2)?;
+    fn op_mov(&mut self) -> Result<usize, String> {
+        // let operand_bytes = self.fetch_operand_bytes(constant::REGISTER_BYTES * 2)?;
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+
         let src_reg = self.get_reg(
             operand_bytes[constant::REGISTER_BYTES..constant::REGISTER_BYTES * 2].to_vec(),
         )?;
-        let dest_reg = self.get_mut_reg(operand_bytes[0..constant::REGISTER_BYTES].to_vec())?;
+        let dest_reg = self.get_mut_reg(
+            operand_bytes[constant::OPCODE_BYTES..constant::REGISTER_BYTES].to_vec(),
+        )?;
         *dest_reg = src_reg;
 
-        Ok(inc_pc(constant::REGISTER_BYTES * 2))
+        Ok(constant::REGISTER_BYTES * 2)
     }
-    fn load(&mut self) -> Result<usize, String> {
-        let operand_bytes =
-            self.fetch_operand_bytes(constant::REGISTER_BYTES + constant::ADDRESS_BYTES)?;
-        let src_addr = MemoryAddress::new(
-            operand_bytes
-                [constant::REGISTER_BYTES..constant::REGISTER_BYTES + constant::ADDRESS_BYTES]
+    /// `load r1,r2,buffer`
+    /// - r1 -- dest register
+    /// - r2 -- size to read in (up to 8 bytes)
+    /// - buffer -- start of memory address range
+    fn op_load(&mut self) -> Result<usize, String> {
+        let bytes_read =
+            constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES; // reg,reg,addr
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let address: u64 = Memory::address_from_bytes(
+            &operand_bytes[constant::REGISTER_BYTES * 2
+                ..constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES], // 4..12
+        )?;
+        let size = self.get_reg(
+            operand_bytes[constant::REGISTER_BYTES..constant::REGISTER_BYTES * 2].to_vec(), // 2..4
+        )? as usize;
+        if size > 8 {
+            return Err(format!(
+                "requested bytes are too large to read into register :: {size} bytes cannot fit into an 8 byte register"
+            ));
+        }
+        let src_val =
+            Memory::address_from_bytes(self.memory.read_bytes(address, size)?.as_slice())?;
+        // not an address but does the same thing basically
+        let dest_reg = self.get_mut_reg(operand_bytes[0..constant::REGISTER_BYTES].to_vec())?; // 0..2
+
+        *dest_reg = src_val;
+        Ok(bytes_read)
+    }
+    fn op_store(&mut self) -> Result<usize, String> {
+        let bytes_read = constant::ADDRESS_BYTES + constant::REGISTER_BYTES * 2;
+        // addr,reg,reg
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let size = self.get_reg(
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2] // 2+2..2+2+2 4..6
                 .to_vec(),
         );
-        let src_address_deref = self.memory.byte_slice(src_addr, size)
-        let dest_reg = self.get_mut_reg(operand_bytes[0..constant::REGISTER_BYTES].to_vec());
+        let address = Memory::address_from_bytes(
+            &operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES],
+        )?; // 2+(2*2).. 6..14
+        let src =
+            self.get_reg(operand_bytes[constant::OPCODE_BYTES..constant::REGISTER_BYTES].to_vec())?; // 0..2
+        let src_bytes = u64::to_le_bytes(src);
+        self.memory.write_bytes(address, &src_bytes)?;
+        Ok(bytes_read)
     }
-    fn end_of_exec_section(&mut self) -> Result<usize, String> {
+
+    fn op_add(&mut self) -> Result<usize, String> {
+        todo!()
+    }
+
+    fn op_sub(&mut self) -> Result<usize, String> {
+        todo!()
+    }
+
+    fn op_mult(&mut self) -> Result<usize, String> {
+        todo!()
+    }
+
+    fn op_div(&mut self) -> Result<usize, String> {
+        todo!()
+    }
+    fn op_end_of_exec_section(&mut self) -> Result<usize, String> {
         println!("end_of_exec_section");
         self.state = State::ProgramExitedSuccess;
         Ok(0)

@@ -102,7 +102,7 @@ impl Shell {
         self.runtime.spr = SpecialPurposeRegisters::new();
         self.runtime.gpr = GeneralPurposeRegisters::new();
         self.runtime.state = State::ProgramLoadedNotStarted;
-        self.runtime.spr.pc = self.runtime.memory.start_of_exec as u64;
+        self.runtime.spr.pc = 0;
         Ok(())
     }
 }

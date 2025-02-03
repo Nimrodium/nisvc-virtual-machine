@@ -103,4 +103,4 @@ fn opcode_encoding_table() -> OpcodeTable {
     lookup_table
 }
 
-fn decode_line(line:&str,opcode_table:&OpcodeTable,label_table:LabelTable)
+// fn decode_line(line:&str,opcode_table:&OpcodeTable,label_table:LabelTable)

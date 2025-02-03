@@ -1,103 +1,54 @@
-use std::{fs::File, io::Read, path::Path};
-
 use crate::constant::{self};
 
 // memory.rs
 // memory interaction
 pub type Bytes = Vec<u8>;
-// pub type MemoryAddress = Vec<u8>; // 72bits/9bytes actually
-// pub enum Pool {
-//     Rom,
-//     Ram,
-// }
-// pub struct MemoryAddress {
-//     pub pool: Pool,
-//     pub address: u64,
-// }
-// impl MemoryAddress {
-//     pub fn new(bytes: Vec<u8>) -> Result<Self, String> {
-//         let length = bytes.len();
-//         if length != 9 {
-//             return Err(format!(
-//                 "invalid memory address, should be 9 bytes, {length} bytes passed"
-//             ));
-//         }
-//         let pool: Pool = match bytes[0] {
-//             0 => Pool::Rom,
-//             1 => Pool::Ram,
-//             _ => {
-//                 return Err(format!(
-//                     "invalid memory address! invalid pool byte {:#x?}",
-//                     bytes[0]
-//                 ))
-//             }
-//         };
-//         let address: u64 = u64::from_le_bytes(match bytes.try_into() {
-//             Ok(array) => array,
-//             Err(why) => {
-//                 let error = format!("failed to build address from :: {:#x?}", why);
-//                 return Err(error);
-//             }
-//         });
-//         Ok(MemoryAddress { pool, address })
-//     }
-// }
-// pub struct Memory {
-//     pub ram: Bytes, // general purpose memory
-//     pub rom: Bytes, // program
-//     pub start_of_exec: usize,
-//     pub end_of_exec: usize,
-// }
-// impl Memory {
-//     pub fn new() -> Self {
-//         Memory {
-//             ram: vec![],
-//             rom: vec![],
-//             start_of_exec: 0,
-//             end_of_exec: 0,
-//         }
-//     }
 
-//     pub fn byte_slice(&self, start_address: &MemoryAddress, size: usize) -> Result<&[u8], String> {
-//         let end_address = start_address.address as usize + size;
-//         match start_address.pool {
-//             Pool::Rom => self
-//                 .rom
-//                 .get((start_address.address as usize)..end_address)
-//                 .ok_or(format!(
-//                     "MemoryAccessViolation on rom read request {:#x?}-{:#x?}",
-//                     start_address.address, end_address
-//                 )),
-//             Pool::Ram => self
-//                 .ram
-//                 .get((start_address.address as usize)..end_address)
-//                 .ok_or(format!(
-//                     "MemoryAccessViolation on rom read request {:#x?}-{:#x?}",
-//                     start_address.address, end_address
-//                 )),
-//         }
-//     }
-// }
-
-struct Memory {
-    rom: Bytes,
-    ram: Bytes,
-    mmio_base: u64,
-    rom_base: u64,
-    rom_exec_base: u64,
-    ram_base: u64,
+pub struct Memory {
+    pub program: Bytes,
+    pub ram: Bytes,
+    pub mmio_base: u64,
+    pub rom_base: u64,
+    // pub rom_exec_base: u64,
+    pub ram_base: u64,
 }
-
+// [MMIO][PROGRAM][DATARAM]
 impl Memory {
     pub fn new() -> Self {
         Memory {
-            rom: vec![],
+            program: vec![],
             ram: vec![],
-            mmio_base: 0,     // always zero unless i put something under mmio
-            rom_base: 0,      // change this when i actually add an mmio system
-            rom_exec_base: 0, // start of program section
-            ram_base: 0,      // start of ram aka rom.len()-1
+            mmio_base: 0, // always zero unless i put something under mmio
+            rom_base: constant::MMIO_ADDRESS_SPACE as u64, // change this when i actually add an mmio system
+            // always ZERO now. // rom_exec_base: 0,                              // start of program section
+            ram_base: 0, // start of ram aka rom.len()-1
         }
+    }
+    /// return a slice of bytes starting address and extending for bytes
+    pub fn read_bytes(&self, address: u64, bytes: usize) -> Result<Vec<u8>, String> {
+        let mut byte_buffer: Vec<u8> = Vec::with_capacity(bytes);
+        for n in 0..bytes {
+            let byte_address = address + n as u64;
+            let byte = self.mmu_read(byte_address)?;
+            byte_buffer.push(byte);
+        }
+        Ok(byte_buffer)
+    }
+    /// write a slice of bytes starting at address and extending for length of bytes inputed
+    pub fn write_bytes(&mut self, address: u64, bytes: &[u8]) -> Result<(), String> {
+        for (n, byte) in bytes.iter().enumerate() {
+            let byte_address = address + n as u64;
+            self.mmu_write(byte_address, *byte)?;
+        }
+        Ok(())
+    }
+    pub fn address_from_bytes(address_bytes: &[u8]) -> Result<u64, String> {
+        let address_bytes_arr: [u8; 8] = match address_bytes.try_into() {
+            Ok(arr) => arr,
+            Err(why) => return Err(format!("error building address from bytes :: {why}")),
+        };
+        let address = u64::from_le_bytes(address_bytes_arr);
+        Ok(address)
     }
 
     /// returns byte at address
@@ -130,9 +81,9 @@ impl Memory {
         }
     }
 
-    fn read(&self, physical_address: u64, is_rom: bool) -> Result<u8, String> {
-        let byte = match is_rom {
-            true => self.rom.get(physical_address as usize).ok_or(format!(
+    fn read(&self, physical_address: u64, is_program: bool) -> Result<u8, String> {
+        let byte = match is_program {
+            true => self.program.get(physical_address as usize).ok_or(format!(
                 "MemoryAccessViolation :: attempted read operation on invalid rom address {physical_address:#x?}"
             )),
             false => self.ram.get(physical_address as usize).ok_or(format!(
