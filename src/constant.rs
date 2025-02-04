@@ -10,3 +10,5 @@ pub const OPCODE_BYTES: usize = 2;
 pub const ADDRESS_BYTES: usize = 8;
 
 pub const MMIO_ADDRESS_SPACE: usize = 10; // give the lowest 10 addresses to mmio
+
+pub const CLOCK_SPEED_MS: u64 = 0; //milliseconds between clock cycle

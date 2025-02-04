@@ -220,6 +220,7 @@ impl Runtime {
             },
         };
         self.state = State::ProgramRunning;
+        let clock_sleep = std::time::Duration::from_millis(constant::CLOCK_SPEED_MS);
         loop {
             match self.state {
                 State::ProgramRunning => (),
@@ -233,6 +234,7 @@ impl Runtime {
                     return Err(error);
                 }
             }
+            std::thread::sleep(clock_sleep);
         }
         Ok(())
     }
@@ -339,40 +341,41 @@ impl Runtime {
         // read data length
         // first u64 after the signature is size of data section in bytes
 
-        let data_rom_length = u64::from_le_bytes(match &binary_image[head..head + 8].try_into() {
+        let program_length = u64::from_le_bytes(match &binary_image[head..head + 8].try_into() {
             Ok(array) => *array,
             Err(why) => {
                 let error = format!("failed to read datarom length :: {}", why);
                 return Err(error);
             }
-        });
-        println!("data_rom_length = {}", data_rom_length);
+        }) as usize;
         head += 8; // pass the datarom length
                    // read exec length
                    // next 8 bytes after datarom length
 
-        let program_length = u64::from_le_bytes(match &binary_image[head..head + 8].try_into() {
+        let data_rom_length = u64::from_le_bytes(match &binary_image[head..head + 8].try_into() {
             Ok(array) => *array,
             Err(why) => {
                 let error = format!("failed to read execrom length :: {}", why);
                 return Err(error);
             }
-        });
+        }) as usize;
         head += 8;
         // data image and program image length u64s read successfully
-
         println!("data_length/initram_size = {}", data_rom_length);
         println!("program_length = {}", program_length);
         println!("rom_base = {:#x?}", self.memory.program_base);
         println!("ram_base = {:#x?}", self.memory.ram_base);
 
-        self.memory.program = binary_image[head + data_rom_length as usize
-            ..head + data_rom_length as usize + program_length as usize]
-            .to_vec();
-        self.memory.ram = binary_image[head..head + data_rom_length as usize].to_vec();
-        // program and ram now loaded
+        // self.memory.program = binary_image[head + data_rom_length as usize
+        //     ..head + data_rom_length as usize + program_length as usize]
+        //     .to_vec();
+        // self.memory.ram = binary_image[head..head + data_rom_length as usize].to_vec();
+        // // program and ram now loaded
 
-        self.memory.ram_base = constant::MMIO_ADDRESS_SPACE as u64 + program_length; // program/ram address boundary
+        self.memory.program = binary_image[head..head + program_length].to_vec();
+        self.memory.ram =
+            binary_image[head + program_length..head + program_length + data_rom_length].to_vec();
+        self.memory.ram_base = (constant::MMIO_ADDRESS_SPACE + program_length) as u64; // program/ram address boundary
         self.spr.pc = self.memory.program_base;
         self.state = State::ProgramLoadedNotStarted;
         Ok(())

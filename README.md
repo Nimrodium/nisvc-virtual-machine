@@ -18,7 +18,7 @@ A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose regist
 
 # Memory Layout
   ## binary image:
-    [SIGNATURE][DATA_LENGTH][PROGRAM_LENGTH][DATA][PROGRAM]
+    [SIGNATURE][PROGRAM_LENGTH][DATA_LENGTH][PROGRAM][DATA]
   ## runtime memory map:
     [MMIO][PROGRAM][DATA]
 # Shell Commands

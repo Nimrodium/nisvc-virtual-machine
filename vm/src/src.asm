@@ -1,4 +1,4 @@
-sdata {
+data {
 
 	string str "spoink",0xa,0x0
  	itoabuff arr ini 0 len 10
@@ -18,9 +18,9 @@ program {
 		itoa o1,r3,o2;
 
 		sys_write
-		
-		
-		
+
+
+
 	}
-	
+
 }
