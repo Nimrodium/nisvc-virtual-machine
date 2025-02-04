@@ -1,3 +1,4 @@
+#!/bin/python
 # simple nimcode assembler
 #
 
@@ -26,6 +27,15 @@ class Tp(enum.Enum):
     Addr = enum.auto(),
     Imm = enum.auto(),
     Op = enum.auto(),
+
+def handle_error(type:str,error:str):
+    RED = "\033[31m"
+    YELLOW = "\033[33m"
+
+    print(f"{RED} Assembly {type.capitalize()} Error :: {YELLOW} {error}")
+    exit(1)
+# RESET = "\033[0m"
+# GREEN = "\033[32m"
 def immediate_byte_size(value) -> int:
     if value > U64_MAX: # cannot be fit
         raise ValueError(f"immediate {value} over u64 limit {U64_MAX}")
@@ -109,7 +119,7 @@ def clean_source(source:str) -> list[str]:
             if line:
                cleaned_instructions.append(clean_line)
 
-        print(cleaned_instructions)
+        # print(cleaned_instructions)
         cleaned_source.extend(cleaned_instructions)
     return cleaned_source
 
@@ -133,11 +143,11 @@ def resolve_program_labels(source:list[str],intermediate:list[list[tuple[int|str
         if line.startswith(LABEL):
             # add label entry
             label_name = line.lower().strip().partition(" ")[0]
-            print(f"{label_name} pointing to pc:{head}")
+            # print(f"{label_name} pointing to pc:{head}")
             labels.update({label_name:head})
         else:
             # advance head
-            print(f"line [ {line} ] at pc:{head}")
+            # print(f"line [ {line} ] at pc:{head}")
             head+= calc_instruction_size(intermediate[i])
             i+=1
     return labels
@@ -162,7 +172,7 @@ def merge_program_and_data_labels(program_labels:dict[str,int],data_labels:dict[
 
     for label_name,label_address in data_labels.items():
         if label_name in program_labels:
-            raise NameError(f"program and data label collision {label_name} already in program labels")
+            handle_error("LabelAlreadyDefined",f"program and data label collision {label_name} already in program labels")
         program_labels.update({label_name:label_address+program_length})
     return program_labels
 
@@ -180,7 +190,7 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
 
 
         if operation_str not in opcode_table: # resolve operation
-            raise Exception(f"unrecognized operation {operation_str}")
+            handle_error("UnknownOperation",f"{operation_str}")
 
         operation_code,fields,types = opcode_table[operation_str]
 
@@ -191,7 +201,7 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
         # print(f"operation: {operation_str}\noperands: {operands_str}")
 
         if len(operands_str) != fields:
-            raise Exception(f"incorrect amount of operands :: {operation_str} expects {fields} while only {len(operands_str)} were provided")
+            handle_error("OperationSyntax",f"incorrect amount of operands :: {operation_str} expects {fields} while only {len(operands_str)} were provided")
         instruction : list[tuple[int|str,Tp,int]] = [(operation_code,Tp.Op,OPCODE_BYTES)]
         for i,operand in enumerate(operands_str):
 
@@ -199,26 +209,26 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
             match data_type:
                 case Tp.Reg:
                     if operand not in register_table.keys():
-                        raise ValueError(f"{operand} not a valid register which is expected by {operation_str} operation at position {i}")
+                        handle_error("OperationSyntax",f"{operand} not a valid register which is expected by {operation_str} operation at position {i}")
                     resolved_register = register_table[operand]
                     instruction.append((resolved_register,Tp.Reg,REGISTER_BYTES))
 
                 case Tp.Addr:
-                    print(f"found address label {operand} during assembly")
+                    # print(f"found address label {operand} during assembly")
                     instruction.append((operand,Tp.Addr,ADDRESS_BYTES))
 
                 case Tp.Imm:
                     if not is_immediate(operand):
-                        raise ValueError(f"{operand} not a valid immediate which is expected by {operation_str} operation at position {i}")
+                        handle_error("OperationSyntax",f"{operand} not a valid immediate which is expected by {operation_str} operation at position {i}")
                         # needs to find smallest size immediate can be skrunkled down to
                         # for now for testing, assume all are u8
                     immediate : int = int(operand[1:])
                     # print(f"immediate {immediate}")
                     instruction.append((immediate,Tp.Imm,immediate_byte_size(immediate)+1))
                 case Tp.Op:
-                    raise ValueError("definition format error")
+                    handle_error("InternalSource","definition format error")
 
-        print(f"instruction : {instruction}")
+        # print(f"instruction : {instruction}")
         program.append(instruction)
     return program
 
@@ -235,16 +245,15 @@ def insert_addresses(labels:dict[str,int],intermediate_program:list[list[tuple[s
         for object,data_type,type in instruction:
             if data_type == Tp.Addr:
                 if isinstance(object,int):
-                    print("already resolved??? how did yo uget here, merge this if later")
                     continue
                 if object not in labels.keys():
-                    raise NameError(f"label undefined {object} was never defined")
-                print(f"found label {object} resolving to {labels[object]}")
+                    handle_error("UnknownLabel",f"label undefined {object} was never defined")
+                # print(f"found label {object} resolving to {labels[object]}")
                 object = labels[object]
             assert isinstance(object,int)
 
             new : tuple[int,Tp,int]= (object,data_type,type)
-            print(new)
+            # print(new)
             resolved_instruction.append(new)
 
         resolved_intermediate.append(resolved_instruction)
@@ -275,7 +284,7 @@ def expand_bytes(intermediate_program:list[list[tuple[int,Tp,int]]]) -> bytes:
             try:
                 expanded = object.to_bytes(expand,"little")
             except AttributeError:
-                raise Exception(f"{object} never dereferenced")
+                handle_error("LabelResolution",f"{object} never dereferenced")
 
             # resolved_program_bytes.append(expanded)
             resolved_program_bytes.extend(list(expanded))
@@ -298,7 +307,9 @@ def nisvc_ef_build(name:str,data:bytes,program:bytes):
 
         f.write(program)
         f.write(data)
-    print(f"assembled binary {name}")
+    RESET = "\033[0m"
+    GREEN = "\033[32m"
+    print(f"{GREEN} assembled binary {name} {RESET}")
 
 def assemble(data_source:list[str],program_source:list[str]) -> tuple[bytes,bytes]:
     assembled_data,data_labels = parse_data_section(data_source)
@@ -317,9 +328,9 @@ def assemble(data_source:list[str],program_source:list[str]) -> tuple[bytes,byte
 def load_section(section:list[str]) -> tuple[list[str],int]: #section lines, last line read
     last_char_open_check = section[0][-1] # last char
     if last_char_open_check != OPEN_SECTION:
-        raise SyntaxError(f"section passed was not opened properly, expected [ {OPEN_SECTION} ] read [ {last_char_open_check} ]")
+        handle_error("Format",f"section passed was not opened properly, expected [ {OPEN_SECTION} ] read [ {last_char_open_check} ]")
     in_section = True
-    print("in section")
+    # print("in section")
     section_buffer : list[str] = []
     lines_read = 1
 
@@ -333,7 +344,7 @@ def load_section(section:list[str]) -> tuple[list[str],int]: #section lines, las
         last_char_closed_check = line[-1] # last char
         if last_char_closed_check == CLOSE_SECTION: # found end
             in_section = False
-            print("exited section")
+            # print("exited section")
             continue
         section_buffer.append(line)
 
@@ -346,19 +357,19 @@ def parse_initial(source:str) -> tuple[list[str],list[str]]:
     cleaned_source = clean_source(source)
     section_name,_,_ = cleaned_source[0].partition(" ")
     if section_name != "program" and section_name != "data":
-        raise SyntaxError(f"invalid section name {section_name}")
+        handle_error("Format",f"invalid section name [ {section_name} ]")
     sections[section_name],last_line = load_section(cleaned_source)
 
     second_source = cleaned_source[last_line+1:]
 
     section2_name,_,_ = second_source[0].partition(" ")
     if section2_name != "program" and section2_name != "data":
-        raise SyntaxError(f"invalid section name {section2_name}")
+        handle_error("Format",f"invalid section name [ {section2_name} ]")
 
-    print("program source : ",second_source)
+    # print("program source : ",second_source)
     sections[section2_name],_ = load_section(second_source)
 
-    print(f"data:\n\n{sections["data"]}\n\nprogram:\n\n{sections["program"]}\n")
+    # print(f"data:\n\n{sections["data"]}\n\nprogram:\n\n{sections["program"]}\n")
     return sections["data"],sections["program"]
 
 
