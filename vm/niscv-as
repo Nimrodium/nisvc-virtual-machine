@@ -1,11 +1,10 @@
 #!/bin/python
 # simple nimcode assembler
 #
-
+import os
 import enum
 import sys
-from types import resolve_bases
-from typing_extensions import Sequence
+from typing_extensions import NoReturn
 U8_MAX = 255
 U16_MAX = 65_535
 U32_MAX = 4_294_967_295
@@ -22,16 +21,18 @@ LITERAL = "#"
 OPEN_SECTION = "{"
 CLOSE_SECTION = "}"
 
+RESET = "\033[0m"
+GREEN = "\033[32m"
+RED = "\033[31m"
+YELLOW = "\033[33m"
+
 class Tp(enum.Enum):
     Reg = enum.auto(),
     Addr = enum.auto(),
     Imm = enum.auto(),
     Op = enum.auto(),
 
-def handle_error(type:str,error:str):
-    RED = "\033[31m"
-    YELLOW = "\033[33m"
-
+def handle_error(type:str,error:str) -> NoReturn :
     print(f"{RED} Assembly {type.capitalize()} Error :: {YELLOW} {error}")
     exit(1)
 # RESET = "\033[0m"
@@ -307,8 +308,7 @@ def nisvc_ef_build(name:str,data:bytes,program:bytes):
 
         f.write(program)
         f.write(data)
-    RESET = "\033[0m"
-    GREEN = "\033[32m"
+
     print(f"{GREEN} assembled binary {name} {RESET}")
 
 def assemble(data_source:list[str],program_source:list[str]) -> tuple[bytes,bytes]:
@@ -372,10 +372,29 @@ def parse_initial(source:str) -> tuple[list[str],list[str]]:
     # print(f"data:\n\n{sections["data"]}\n\nprogram:\n\n{sections["program"]}\n")
     return sections["data"],sections["program"]
 
+def main():
+    if len(sys.argv) < 2:
+        handle_error("Argument","missing input file... aborting")
 
-in_file : str = open(sys.argv[1]).read() # currently expects raw program, no memory access
-out_file : str =  sys.argv[2]
-data,program = parse_initial(in_file)
-data : list[str] = []
-asm_data,asm_program = assemble(data,program)
-nisvc_ef_build(out_file,asm_data,asm_program)
+    if len(sys.argv) < 3:
+        print(f"{YELLOW} Assembly Argument Warning ::{RESET} output file not specified, defaulting to nisvc.out")
+        out_file : str = "nisvc.out"
+    else:
+        out_file : str =  sys.argv[2]
+
+    try:
+        in_file : str = open(sys.argv[1]).read() # currently expects raw program, no memory access
+    except FileNotFoundError as e:
+        handle_error("Argument",f"{e}")
+    except IsADirectoryError as e:
+        handle_error("Argument",f"{e}")
+
+    if os.path.exists(out_file):
+        if os.path.isdir(out_file):
+            handle_error("Arugument",f"{out_file} exists and is a directory.\n{sys.argv[0]} will only overwrite regular files")
+
+    data,program = parse_initial(in_file)
+    data : list[str] = []
+    asm_data,asm_program = assemble(data,program)
+    nisvc_ef_build(out_file,asm_data,asm_program)
+main()
