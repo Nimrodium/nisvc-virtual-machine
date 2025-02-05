@@ -253,12 +253,12 @@ impl Runtime {
             Opcode::Mult => self.op_mult(),
             Opcode::Div => self.op_div(),
             Opcode::End_of_exec_section => self.op_end_of_exec_section(),
-            Opcode::Or => todo!(),
-            Opcode::Xor => todo!(),
-            Opcode::And => todo!(),
-            Opcode::Not => todo!(),
-            Opcode::Shl => todo!(),
-            Opcode::Shr => todo!(),
+            Opcode::Or => self.op_or(),
+            Opcode::Xor => self.op_xor(),
+            Opcode::And => self.op_and(),
+            Opcode::Not => self.op_not(),
+            Opcode::Shl => self.op_shl(),
+            Opcode::Shr => self.op_shr(),
         };
         match operation_result {
             Ok(increment) => self.spr.pc += increment as u64,
@@ -400,7 +400,7 @@ impl Runtime {
             Err(()) => return Err(format!("opcode {:#x?} not recognized", opcode_code)),
         }
     }
-    fn dest_src1_src2_format_decode(&mut self) -> Result<(&mut u64, u64, u64, usize), String> {
+    fn trinary_operand_decode(&mut self) -> Result<(&mut u64, u64, u64, usize), String> {
         let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3;
         let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
         let src1 = self.get_reg(
@@ -430,7 +430,7 @@ impl Runtime {
         )?;
         Ok(first_register)
     }
-    fn dest_src_format_decode(&mut self) -> Result<(&mut u64, u64, usize), String> {
+    fn binary_operand_decode(&mut self) -> Result<(&mut u64, u64, usize), String> {
         let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2;
         let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
         let src = self.get_reg(
@@ -550,69 +550,121 @@ impl Runtime {
             operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
                 ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2] // 2+2..2+2+2 4..6
                 .to_vec(),
-        );
+        )?;
         let address = Memory::address_from_bytes(
             &operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
                 ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES],
         )?; // 2+(2*2).. 6..14
         let src =
             self.get_reg(operand_bytes[constant::OPCODE_BYTES..constant::REGISTER_BYTES].to_vec())?; // 0..2
-        let src_bytes = u64::to_le_bytes(src); // need to then trunicate src_bytes by size
-        self.memory.write_bytes(address, &src_bytes)?;
+        let src_bytes = &u64::to_le_bytes(src)[0..size as usize]; // need to then trunicate src_bytes by size
+        self.memory.write_bytes(address, src_bytes)?;
         Ok(bytes_read)
     }
 
     fn op_add(&mut self) -> Result<usize, String> {
-        let (sum, addend1, addend2, bytes_read) = self.dest_src1_src2_format_decode()?;
-        *sum = addend1 + addend2;
+        let (sum, addend1, addend2, bytes_read) = self.trinary_operand_decode()?;
+        // *sum = addend1 + addend2;
+        *sum = addend1.wrapping_add(addend2);
         Ok(bytes_read)
     }
 
     fn op_sub(&mut self) -> Result<usize, String> {
-        let (difference, minuend, subtrahend, bytes_read) = self.dest_src1_src2_format_decode()?;
-        *difference = minuend - subtrahend;
+        let (difference, minuend, subtrahend, bytes_read) = self.trinary_operand_decode()?;
+        *difference = minuend.wrapping_sub(subtrahend);
         Ok(bytes_read)
     }
 
     fn op_mult(&mut self) -> Result<usize, String> {
-        let (result, multiplier, multiplicland, bytes_read) =
-            self.dest_src1_src2_format_decode()?;
+        let (result, multiplier, multiplicland, bytes_read) = self.trinary_operand_decode()?;
         *result = multiplier * multiplicland;
+        *result = multiplier.wrapping_mul(multiplicland);
         Ok(bytes_read)
     }
-
+    /// div quotient,remainder,dividend,divisor
     fn op_div(&mut self) -> Result<usize, String> {
-        let (quotient, dividend, divisor, bytes_read) = self.dest_src1_src2_format_decode()?;
-        todo!()
+        // let (quotient, dividend, divisor, bytes_read) = self.dest_src1_src2_format_decode()?;
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 4;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+
+        let dividend = self.get_reg(
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3]
+                .to_vec(),
+        )?; // 2+(2*2)..2+(2*3) 6..9
+        let divisor = self.get_reg(
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 4]
+                .to_vec(),
+        )?;
+        let quotient = self.get_mut_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        *quotient = dividend.wrapping_div(divisor);
+
+        let remainder = self.get_mut_reg(
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2]
+                .to_vec(),
+        )?;
+
+        *remainder = dividend.wrapping_rem(divisor);
+
+        Ok(bytes_read)
     }
+    fn op_neg(&mut self) -> Result<usize, String> {
+        let (dest, src, bytes_read) = self.binary_operand_decode()?;
+        *dest = src.wrapping_neg();
+        Ok(bytes_read)
+    }
+    /// or dest(reg),src1(reg),src2(reg)
     fn op_or(&mut self) -> Result<usize, String> {
-        let (result, byte1, byte2, bytes_read) = self.dest_src1_src2_format_decode()?;
+        let (result, byte1, byte2, bytes_read) = self.trinary_operand_decode()?;
         *result = byte1 | byte2;
         Ok(bytes_read)
     }
+    /// xor dest(reg),src1(reg),src2(reg)
     fn op_xor(&mut self) -> Result<usize, String> {
-        let (result, byte1, byte2, bytes_read) = self.dest_src1_src2_format_decode()?;
+        let (result, byte1, byte2, bytes_read) = self.trinary_operand_decode()?;
         *result = byte1 ^ byte2;
         Ok(bytes_read)
     }
+    /// and dest(reg),src1(reg),src2(reg)
     fn op_and(&mut self) -> Result<usize, String> {
-        let (result, byte1, byte2, bytes_read) = self.dest_src1_src2_format_decode()?;
+        let (result, byte1, byte2, bytes_read) = self.trinary_operand_decode()?;
         *result = byte1 & byte2;
         Ok(bytes_read)
     }
+    /// not dest(reg),src(reg)
     fn op_not(&mut self) -> Result<usize, String> {
-        let (result, byte, bytes_read) = self.dest_src_format_decode()?;
+        let (result, byte, bytes_read) = self.binary_operand_decode()?;
         *result = !byte;
         Ok(bytes_read)
     }
+    /// shl dest(reg),src(reg),amount(reg)
     fn op_shl(&mut self) -> Result<usize, String> {
-        let (result, byte1, amount, bytes_read) = self.dest_src1_src2_format_decode()?;
-        *result = byte1 << amount;
+        let (result, byte1, amount, bytes_read) = self.trinary_operand_decode()?;
+        *result = byte1.wrapping_shl(amount as u32);
         Ok(bytes_read)
     }
+    /// shr dest(reg),src(reg),amount(reg)
     fn op_shr(&mut self) -> Result<usize, String> {
-        let (result, byte1, amount, bytes_read) = self.dest_src1_src2_format_decode()?;
-        *result = byte1 >> amount;
+        let (result, byte1, amount, bytes_read) = self.trinary_operand_decode()?;
+        *result = byte1.wrapping_shr(amount as u32);
+        Ok(bytes_read)
+    }
+    /// rotl dest(reg),src(reg),amount(reg)
+    fn op_rotl(&mut self) -> Result<usize, String> {
+        let (result, byte1, amount, bytes_read) = self.trinary_operand_decode()?;
+        *result = byte1.rotate_left(amount as u32);
+        Ok(bytes_read)
+    }
+    /// rotr dest(reg),src(reg),amount(reg)
+    fn op_rotr(&mut self) -> Result<usize, String> {
+        let (result, byte1, amount, bytes_read) = self.trinary_operand_decode()?;
+        *result = byte1.rotate_right(amount as u32);
         Ok(bytes_read)
     }
     fn op_end_of_exec_section(&mut self) -> Result<usize, String> {

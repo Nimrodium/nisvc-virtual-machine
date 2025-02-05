@@ -1,6 +1,9 @@
 #!/bin/python
 # simple nimcode assembler
-#
+
+# just a prototyping file for when i rewrite the assembler in rust, but it does fully work.
+# and i could just leave it like this honestly.
+
 import os
 import enum
 import sys
@@ -210,7 +213,7 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
             match data_type:
                 case Tp.Reg:
                     if operand not in register_table.keys():
-                        handle_error("OperationSyntax",f"{operand} not a valid register which is expected by {operation_str} operation at position {i}")
+                        handle_error("OperationSyntax",f"{operand} not a valid register which is expected by {operation_str} operation at position {i+5}")
                     resolved_register = register_table[operand]
                     instruction.append((resolved_register,Tp.Reg,REGISTER_BYTES))
 
@@ -245,14 +248,19 @@ def insert_addresses(labels:dict[str,int],intermediate_program:list[list[tuple[s
         resolved_instruction : list[tuple[int,Tp,int]] = []
         for object,data_type,type in instruction:
             if data_type == Tp.Addr:
-                if isinstance(object,int):
-                    continue
-                if object not in labels.keys():
-                    handle_error("UnknownLabel",f"label undefined {object} was never defined")
+                assert isinstance(object,str)
+                # if hardcoded address (for stuff like MMIO)
+                if object.isdigit():
+                    object = int(object)
+                # if its not in keys
+                elif object in labels.keys():
+                    assert isinstance(object,str)
+                    object = labels[object]
                 # print(f"found label {object} resolving to {labels[object]}")
-                object = labels[object]
-            assert isinstance(object,int)
+                else:
+                   handle_error("UnknownLabel",f"{object} was never defined")
 
+            assert isinstance(object,int)
             new : tuple[int,Tp,int]= (object,data_type,type)
             # print(new)
             resolved_instruction.append(new)
@@ -383,7 +391,7 @@ def main():
         out_file : str =  sys.argv[2]
 
     try:
-        in_file : str = open(sys.argv[1]).read() # currently expects raw program, no memory access
+        in_file : str = open(sys.argv[1]).read() # currently expects full layout, just does not parse data section
     except FileNotFoundError as e:
         handle_error("Argument",f"{e}")
     except IsADirectoryError as e:

@@ -43,3 +43,28 @@ A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose regist
   - sub
   - mult
   - div
+  - or
+  - xor
+  - and
+  - not
+  - shl
+  - shr
+
+# Assembly Syntax
+- sections are enclosed in brackets
+- comments are denoted by two backslashes `//`
+- instructions may be seperated by a newline or semicolon (inline code is allowed)
+- literals are prefixed with `#`
+- labels are prefixed with`!`
+
+
+```assembly
+data {
+	// data stuff here
+}
+
+program {
+	// 	program instructions here
+	movim r1,#10
+}
+```
