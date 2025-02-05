@@ -54,6 +54,10 @@ decode!(
         Shl = 0x0d as isize,
         Shr = 0x0e as isize,
 
+        Rotl = 0x0f as isize,
+        Rotr = 0x10 as isize,
+        Neg = 0x11 as isize,
+
         // special
         End_of_exec_section = 0xFFFF as isize,
     }

@@ -67,11 +67,14 @@ opcode_table : dict[str,tuple[int,int,list]] = {
     "div":(0x08,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
 
     "or":(0x09,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
-    "xor":(0x05,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
-    "and":(0x05,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
-    "not":(0x05,2,[Tp.Reg,Tp.Reg]),
-    "shl":(0x05,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
-    "shr":(0x05,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
+    "xor":(0x0a,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
+    "and":(0x0b,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
+    "not":(0x0c,2,[Tp.Reg,Tp.Reg]),
+    "shl":(0x0d,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
+    "shr":(0x0e,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
+    "rotl":(0x0f,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
+    "rotr":(0x10,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
+    "neg":(0x11,2,[Tp.Reg,Tp.Reg]),
 }
 
 register_table = {

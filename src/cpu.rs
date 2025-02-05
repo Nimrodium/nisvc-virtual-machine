@@ -252,13 +252,18 @@ impl Runtime {
             Opcode::Sub => self.op_sub(),
             Opcode::Mult => self.op_mult(),
             Opcode::Div => self.op_div(),
-            Opcode::End_of_exec_section => self.op_end_of_exec_section(),
+            Opcode::Neg => self.op_neg(),
+
             Opcode::Or => self.op_or(),
             Opcode::Xor => self.op_xor(),
             Opcode::And => self.op_and(),
             Opcode::Not => self.op_not(),
             Opcode::Shl => self.op_shl(),
             Opcode::Shr => self.op_shr(),
+            Opcode::Rotl => self.op_rotl(),
+            Opcode::Rotr => self.op_rotr(),
+
+            Opcode::End_of_exec_section => self.op_end_of_exec_section(),
         };
         match operation_result {
             Ok(increment) => self.spr.pc += increment as u64,
