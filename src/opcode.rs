@@ -58,6 +58,12 @@ decode!(
         Rotr = 0x10 as isize,
         Neg = 0x11 as isize,
 
+        // control
+        Jmp = 0x12 as isize,
+        Jifz = 0x13 as isize,
+        Jifnz = 0x14 as isize,
+
+        Pr = 0x015 as isize,
         // special
         End_of_exec_section = 0xFFFF as isize,
     }

@@ -65,6 +65,6 @@ data {
 
 program {
 	// 	program instructions here
-	movim r1,#10
+	movim r1,$10
 }
 ```

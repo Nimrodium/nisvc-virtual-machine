@@ -128,7 +128,7 @@ impl Runtime {
     fn get_mut_reg(&mut self, reg_bytes: Vec<u8>) -> Result<&mut u64, String> {
         let mut bytes = reg_bytes.clone();
         let reg = bytes_to_u64(&mut bytes)?;
-        println!("reg_code: {reg}");
+        // println!("reg_code: {reg}");
         match reg {
             1 => Ok(&mut self.gpr.r1),
             2 => Ok(&mut self.gpr.r2),
@@ -169,7 +169,7 @@ impl Runtime {
     fn get_reg(&self, reg_bytes: Vec<u8>) -> Result<u64, String> {
         let mut bytes = reg_bytes.clone();
         let reg = bytes_to_u64(&mut bytes)?;
-        println!("reg_code: {reg}");
+        // println!("reg_code: {reg}");
         match reg {
             1 => Ok(self.gpr.r1),
             2 => Ok(self.gpr.r2),
@@ -264,6 +264,10 @@ impl Runtime {
             Opcode::Rotr => self.op_rotr(),
 
             Opcode::End_of_exec_section => self.op_end_of_exec_section(),
+            Opcode::Jmp => self.op_jmp(),
+            Opcode::Jifz => self.op_jifz(),
+            Opcode::Jifnz => self.op_jifnz(),
+            Opcode::Pr => self.op_pr(),
         };
         match operation_result {
             Ok(increment) => self.spr.pc += increment as u64,
@@ -399,7 +403,7 @@ impl Runtime {
         });
         match opcode_code.try_into() {
             Ok(opcode) => {
-                println!("decoded {opcode:?}");
+                // println!("decoded {opcode:?}");
                 Ok(opcode)
             }
             Err(()) => return Err(format!("opcode {:#x?} not recognized", opcode_code)),
@@ -509,9 +513,9 @@ impl Runtime {
             self.spr.pc + constant::OPCODE_BYTES as u64 + constant::REGISTER_BYTES as u64 + 1,
             size,
         )?;
-        println!("imm {immediate:?}");
+        // println!("imm {immediate:?}");
         let immediate_u64 = bytes_to_u64(&mut immediate)?;
-        println!("imm_u64 {immediate_u64}");
+        // println!("imm_u64 {immediate_u64}");
         let dest_bytes = operand_bytes
             [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
             .to_vec();
@@ -670,6 +674,83 @@ impl Runtime {
     fn op_rotr(&mut self) -> Result<usize, String> {
         let (result, byte1, amount, bytes_read) = self.trinary_operand_decode()?;
         *result = byte1.rotate_right(amount as u32);
+        Ok(bytes_read)
+    }
+    /// jmp address
+    fn op_jmp(&mut self) -> Result<usize, String> {
+        let bytes_read = constant::OPCODE_BYTES + constant::ADDRESS_BYTES;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+
+        let address: u64 = Memory::address_from_bytes(
+            &operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::ADDRESS_BYTES], // 4..12
+        )?;
+
+        self.spr.pc = address;
+        // println!("jmp address : {address:#x}\npc {:#x}", self.spr.pc);
+        Ok(0) // returns zero because we modified the program counter
+    }
+
+    /// jifz condition address
+    fn op_jifz(&mut self) -> Result<usize, String> {
+        let bytes_read =
+            constant::OPCODE_BYTES + constant::REGISTER_BYTES + constant::ADDRESS_BYTES;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let condition = self.get_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        let address = Memory::address_from_bytes(
+            &operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES + constant::ADDRESS_BYTES],
+        )?;
+        let return_value;
+        if condition == 0 {
+            self.spr.pc = address;
+            println!("jifz condition is zero, jumping to {address}");
+            return_value = 0;
+        } else {
+            println!("jifz condition not zero no action taken");
+            return_value = bytes_read;
+        }
+        Ok(return_value) // return zero if no action taken
+    }
+    /// jifnz condition address
+    fn op_jifnz(&mut self) -> Result<usize, String> {
+        let bytes_read =
+            constant::OPCODE_BYTES + constant::REGISTER_BYTES + constant::ADDRESS_BYTES;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let condition = self.get_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        let address = Memory::address_from_bytes(
+            &operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES + constant::ADDRESS_BYTES],
+        )?;
+        let return_value;
+        if condition != 0 {
+            self.spr.pc = address;
+            println!("jifnz condition is not zero, jumping to {address:#x}");
+            return_value = 0;
+        } else {
+            println!("jifnz condition is zero no action taken");
+            return_value = bytes_read;
+        }
+        Ok(return_value) // return zero if no action taken
+    }
+    // pr src(reg)
+    fn op_pr(&mut self) -> Result<usize, String> {
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let register = self.get_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        println!("pr out: {register}");
         Ok(bytes_read)
     }
     fn op_end_of_exec_section(&mut self) -> Result<usize, String> {

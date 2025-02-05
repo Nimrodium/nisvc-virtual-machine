@@ -16,7 +16,7 @@ U64_MAX = 18_446_744_073_709_551_615
 REGISTER_BYTES = 1
 OPCODE_BYTES = 1
 ADDRESS_BYTES = 8
-MMIO_ADDRESS_SPACE = 10
+MMIO_ADDRESS_SPACE = 42
 LABEL = "!"
 SEPERATOR = ";"
 COMMENT = "//"
@@ -75,6 +75,12 @@ opcode_table : dict[str,tuple[int,int,list]] = {
     "rotl":(0x0f,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
     "rotr":(0x10,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
     "neg":(0x11,2,[Tp.Reg,Tp.Reg]),
+
+    "jmp":(0x12,1,[Tp.Addr]),
+    "jifz":(0x13,2,[Tp.Reg,Tp.Addr]),
+    "jifnz":(0x14,2,[Tp.Reg,Tp.Addr]),
+
+    "pr":(0x15,1,[Tp.Reg]),
 }
 
 register_table = {
@@ -189,6 +195,7 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
 
 
     for raw_instruction in source:
+        print(raw_instruction)
         if raw_instruction.startswith(LABEL):
             # skip labels
             continue
@@ -202,7 +209,7 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
         operation_code,fields,types = opcode_table[operation_str]
 
         if fields > 0:
-            operands_str : list[str] = raw_instruction[1].strip().split(",") # ["r1","r2"]
+            operands_str : list[str] = raw_instruction[1].split(",") # ["r1","r2"]
         else:
             operands_str = []
         # print(f"operation: {operation_str}\noperands: {operands_str}")
@@ -345,12 +352,17 @@ def load_section(section:list[str]) -> tuple[list[str],int]: #section lines, las
     section_buffer : list[str] = []
     lines_read = 1
 
-    skip_first_iteration = True
+    first_iteration = True
     while in_section:
-        if skip_first_iteration:
-            skip_first_iteration = False
-            continue
         line = section[lines_read]
+        if first_iteration:
+            # print("line: ",line)
+            first_iteration = False
+            line = line[0:]
+            # print("0: ",line)
+            if not line:
+                #empty
+                continue
 
         last_char_closed_check = line[-1] # last char
         if last_char_closed_check == CLOSE_SECTION: # found end

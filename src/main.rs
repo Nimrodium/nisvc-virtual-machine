@@ -8,9 +8,9 @@ mod assembler;
 mod constant;
 mod cpu;
 mod memory;
+mod mmio;
 mod opcode;
 mod shell;
-mod vio;
 fn main() {
     let mut shell = match Shell::new() {
         Ok(shell) => shell,
