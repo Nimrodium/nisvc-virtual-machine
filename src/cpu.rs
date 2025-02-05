@@ -393,7 +393,7 @@ impl Runtime {
         let opcode_code = OpcodeSize::from_le_bytes(match opcode_bytes.try_into() {
             Ok(array) => array,
             Err(why) => {
-                let error = format!("failed to rezad datarom length :: {:?}", why);
+                let error = format!("failed to read opcode :: {:?}", why);
                 return Err(error);
             }
         });

@@ -13,14 +13,14 @@ U16_MAX = 65_535
 U32_MAX = 4_294_967_295
 U64_MAX = 18_446_744_073_709_551_615
 
-REGISTER_BYTES = 2
-OPCODE_BYTES = 2
+REGISTER_BYTES = 1
+OPCODE_BYTES = 1
 ADDRESS_BYTES = 8
 MMIO_ADDRESS_SPACE = 10
 LABEL = "!"
 SEPERATOR = ";"
 COMMENT = "//"
-LITERAL = "#"
+LITERAL = "$"
 OPEN_SECTION = "{"
 CLOSE_SECTION = "}"
 
@@ -64,7 +64,7 @@ opcode_table : dict[str,tuple[int,int,list]] = {
     "add":(0x05,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
     "sub":(0x06,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
     "mult":(0x07,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
-    "div":(0x08,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
+    "div":(0x08,4,[Tp.Reg,Tp.Reg,Tp.Reg,Tp.Reg]),
 
     "or":(0x09,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
     "xor":(0x0a,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
