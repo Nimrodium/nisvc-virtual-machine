@@ -4,6 +4,7 @@
 # just a prototyping file for when i rewrite the assembler in rust, but it does fully work.
 # and i could just leave it like this honestly.
 
+import re
 import os
 import enum
 import sys
@@ -17,10 +18,15 @@ REGISTER_BYTES = 1
 OPCODE_BYTES = 1
 ADDRESS_BYTES = 8
 MMIO_ADDRESS_SPACE = 42
+
 LABEL = "!"
+LITERAL = "$"
+ASSEMBLY_POINTER = "."
+BASE_RAM_POINTER = "@"
+
 SEPERATOR = ";"
 COMMENT = "//"
-LITERAL = "$"
+
 OPEN_SECTION = "{"
 CLOSE_SECTION = "}"
 
@@ -35,30 +41,11 @@ class Tp(enum.Enum):
     Imm = enum.auto(),
     Op = enum.auto(),
 
-def handle_error(type:str,error:str) -> NoReturn :
-    print(f"{RED} Assembly {type.capitalize()} Error :: {YELLOW} {error}")
-    exit(1)
-# RESET = "\033[0m"
-# GREEN = "\033[32m"
-def immediate_byte_size(value) -> int:
-    if value > U64_MAX: # cannot be fit
-        raise ValueError(f"immediate {value} over u64 limit {U64_MAX}")
-    if value < 0:
-        raise ValueError(f"immediate {value} is negative which is not supported in the current nimcode implementation")
-    if value > U32_MAX:
-        return 8
-    elif value > U16_MAX:
-        return 4
-    elif value > U8_MAX:
-        return 2
-    else:
-        return 1
-
 opcode_table : dict[str,tuple[int,int,list]] = {
     "nop":(0x00,0,[]),
     "mov":(0x01,2,[Tp.Reg,Tp.Reg]),
     "movim":(0x02,2,[Tp.Reg,Tp.Imm]),
-    "load":(0x02,3,[Tp.Reg,Tp.Reg,Tp.Addr]),
+    "load":(0x03,3,[Tp.Reg,Tp.Reg,Tp.Addr]),
     "store":(0x04,3,[Tp.Addr,Tp.Reg,Tp.Reg]),
 
     "add":(0x05,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
@@ -113,6 +100,104 @@ register_table = {
     "o5":27,
 }
 
+def handle_error(type:str,error:str) -> NoReturn :
+    print(f"{RED} Assembly {type.capitalize()} Error :: {YELLOW} {error}")
+    exit(1)
+
+def parse_expression(expr:list[str|int]) -> int:
+    # detokenize
+    literal_expr = ""
+    for token in expr:
+        literal_expr+=str(token)
+
+    literal_expr = re.sub(r'(\d)(\()', r'\1*\2', literal_expr) # i did NOT make this, NO credit to ME
+    print(literal_expr)
+    try:
+        result = eval(literal_expr)
+    except SyntaxError as e:
+        handle_error("Syntax",f"{literal_expr} failed to evaluate :: {e} ::")
+    return result
+
+def tokenize_expression(statement:str,base_ram_address:int,assembly_pointer:int,labels:dict[str,int]) -> list[str|int]:
+    # input exm : "@+1-2"
+    print(statement)
+    state = 0
+    intermediate : list[str|int] = []
+    operations = ['+','-','*','/','%',' ','(',')']
+
+    building_int = False
+    integer_buffer : str = ""
+
+    building_label = False
+    label_buffer : str = ""
+    for char in statement:
+        if char.isdigit() and not building_label:
+            print(f"found digit : {char}")
+            building_int = True
+            integer_buffer+=char
+        elif char.startswith(LABEL) and not building_int:
+            building_label = True
+            label_buffer+=char
+
+        elif char in operations:
+            if building_int:
+                building_int = False
+                intermediate.append(int(integer_buffer))
+                integer_buffer = ""
+
+            elif building_label:
+                building_label = False
+                intermediate.append(label_buffer)
+                label_buffer = ""
+            if char != " ":
+                intermediate.append(char)
+        elif building_label and not building_int:
+                    label_buffer+=char
+        else:
+            handle_error(f"Syntax",f"unexpected character [ {char} ] in {statement}")
+
+    if integer_buffer:
+        intermediate.append(int(integer_buffer))
+    if label_buffer:
+        intermediate.append(label_buffer)
+    print(intermediate)
+    delabeled_intermediate : list[int|str] = []
+    for element in intermediate:
+        if isinstance(element,str):
+            if element.startswith(LABEL):
+                if element in labels.keys():
+                    new = labels[element]
+                else:
+                    handle_error("UnknownLabel",f"{element} is not known (yet)")
+            else:
+                new = element
+        elif isinstance(element,int):
+            new = element
+        else:
+            handle_error("Internal",f"??? what is {element} and why is he here")
+        delabeled_intermediate.append(new)
+    print(delabeled_intermediate)
+
+    return delabeled_intermediate
+
+def evaluate_math_expression(expr:str,base_ram_address:int,assembly_pointer:int,labels:dict[str,int]) -> int:
+    tokenized = tokenize_expression(expr,base_ram_address,assembly_pointer,labels)
+    result : int = parse_expression(tokenized)
+    return result
+
+def immediate_byte_size(value) -> int:
+    if value > U64_MAX: # cannot be fit
+        raise ValueError(f"immediate {value} over u64 limit {U64_MAX}")
+    if value < 0:
+        raise ValueError(f"immediate {value} is negative which is not supported in the current nimcode implementation")
+    if value > U32_MAX:
+        return 8
+    elif value > U16_MAX:
+        return 4
+    elif value > U8_MAX:
+        return 2
+    else:
+        return 1
 
 def clean_source(source:str) -> list[str]:
     source_lines = source.strip().splitlines()
@@ -165,15 +250,29 @@ def resolve_program_labels(source:list[str],intermediate:list[list[tuple[int|str
             i+=1
     return labels
 
-
-
 # reads data section and returns data byte sequence and label table
 # ram_base == last address of program + 1
 def parse_data_section(source:list[str]) -> tuple[bytes,dict[str,int]]:
+    labels : dict[str,int] = {}
+    ram : list[int] = []
+    for line in source:
+        print(f"data : {line}")
+        label,_,rest = line.partition(" ")
+        command,_,data = rest.partition(" ")
+        print(f"label: {label}\ncommand: {command}")
+        match command:
+            case "equ":
+                # literal = data.strip()
+                # if not literal.isdigit():
+                #     handle_error("Syntax",f"{literal} is not a valid literal, which is expected by {command}")
+                # labels.update({label:int(literal)})
+                pass
 
-    return (bytes([0]),{})
+            case _:
+                handle_error("Syntax",f"unrecognized data definition command [ {command} ]")
 
 
+    return (bytes([0]),labels)
 
 def merge_program_and_data_labels(program_labels:dict[str,int],data_labels:dict[str,int],program_length) -> dict[str,int]:
     # data labels are relative to start of data
@@ -232,13 +331,22 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
                     instruction.append((operand,Tp.Addr,ADDRESS_BYTES))
 
                 case Tp.Imm:
-                    if not is_immediate(operand):
+                    # if not is_immediate(operand):
+                    #     handle_error("OperationSyntax",f"{operand} not a valid immediate which is expected by {operation_str} operation at position {i}")
+                    # immediate : int = int(operand[1:])
+                    # instruction.append((immediate,Tp.Imm,immediate_byte_size(immediate)+1))
+
+                    if operand[1:].isdigit() and operand.startswith(LITERAL):
+                        print("literal")
+                        immediate = int(operand[1:])
+                        instruction.append((immediate,Tp.Imm,immediate_byte_size(immediate)+1))
+
+                    elif operand.startswith(LABEL):
+                        print("palceholder label")
+                        instruction.append((operand,Tp.Imm,0xDEADBEEF))
+                    else:
                         handle_error("OperationSyntax",f"{operand} not a valid immediate which is expected by {operation_str} operation at position {i}")
-                        # needs to find smallest size immediate can be skrunkled down to
-                        # for now for testing, assume all are u8
-                    immediate : int = int(operand[1:])
-                    # print(f"immediate {immediate}")
-                    instruction.append((immediate,Tp.Imm,immediate_byte_size(immediate)+1))
+
                 case Tp.Op:
                     handle_error("InternalSource","definition format error")
 
@@ -269,6 +377,14 @@ def insert_addresses(labels:dict[str,int],intermediate_program:list[list[tuple[s
                 # print(f"found label {object} resolving to {labels[object]}")
                 else:
                    handle_error("UnknownLabel",f"{object} was never defined")
+            elif data_type == Tp.Imm and isinstance(object,str):
+                # placeholder object, replace!
+                # if object.isdigit():
+                if object in labels.keys():
+                    object = labels[object]
+                    type = immediate_byte_size(object)+1 # +1 for preliminary size declaration byte itself
+                else:
+                    handle_error("UnknownLabel",f"{object} was never defined")
 
             assert isinstance(object,int)
             new : tuple[int,Tp,int]= (object,data_type,type)
@@ -277,7 +393,6 @@ def insert_addresses(labels:dict[str,int],intermediate_program:list[list[tuple[s
 
         resolved_intermediate.append(resolved_instruction)
     return resolved_intermediate
-
 
 def expand_bytes(intermediate_program:list[list[tuple[int,Tp,int]]]) -> bytes:
     resolved_program_bytes : list[int] = []
@@ -417,7 +532,10 @@ def main():
             handle_error("Arugument",f"{out_file} exists and is a directory.\n{sys.argv[0]} will only overwrite regular files")
 
     data,program = parse_initial(in_file)
-    data : list[str] = []
     asm_data,asm_program = assemble(data,program)
     nisvc_ef_build(out_file,asm_data,asm_program)
-main()
+# main()
+labels = {"!label":16,"!louis":12,"!spoink":1234}
+result = evaluate_math_expression(sys.argv[1],0,0,labels)
+print(result)
+# eval_expression((1,"+",2))
