@@ -241,7 +241,7 @@ impl Runtime {
     /// step through one cycle
     pub fn step(&mut self) -> Result<(), String> {
         let opcode = self.decode_opcode()?;
-
+        println!("{opcode:?}");
         let operation_result = match opcode {
             Opcode::Nop => self.nop(),
             Opcode::Mov => self.op_mov(),
@@ -271,7 +271,7 @@ impl Runtime {
         };
         match operation_result {
             Ok(increment) => self.spr.pc += increment as u64,
-            Err(runtime_error) => return Err(format!("runtime error: {}", runtime_error)),
+            Err(runtime_error) => return Err(format!("runtime error :: {}", runtime_error)),
         }
         Ok(())
     }
@@ -470,7 +470,7 @@ fn bytes_to_u64(bytes: &mut Vec<u8>) -> Result<u64, String> {
 // return of all instructions are Ok(increment program counter),Err(instruction Error)
 impl Runtime {
     fn nop(&self) -> Result<usize, String> {
-        println!("nop");
+        // println!("nop");
 
         Ok(constant::OPCODE_BYTES)
     }
@@ -532,23 +532,28 @@ impl Runtime {
             constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES; // reg,reg,addr
         let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
         let address: u64 = Memory::address_from_bytes(
-            &operand_bytes[constant::REGISTER_BYTES * 2
-                ..constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES], // 4..12
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES]
+                .to_vec(), // 4..12
         )?;
         let size = self.get_reg(
-            operand_bytes[constant::REGISTER_BYTES..constant::REGISTER_BYTES * 2].to_vec(), // 2..4
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2]
+                .to_vec(), // 2..4
         )? as usize;
         if size > 8 {
             return Err(format!(
                 "requested bytes are too large to read into register :: {size} bytes cannot fit into an 8 byte register"
             ));
         }
-        let src_val =
-            Memory::address_from_bytes(self.memory.read_bytes(address, size)?.as_slice())?;
-        // not an address but does the same thing basically
-        let dest_reg = self.get_mut_reg(operand_bytes[0..constant::REGISTER_BYTES].to_vec())?; // 0..2
+        let dereferenced_value = bytes_to_u64(&mut self.memory.read_bytes(address, size)?)?;
+        let dest_reg = self.get_mut_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?; // 0..2
 
-        *dest_reg = src_val;
+        *dest_reg = dereferenced_value;
         Ok(bytes_read)
     }
     fn op_store(&mut self) -> Result<usize, String> {
@@ -561,8 +566,9 @@ impl Runtime {
                 .to_vec(),
         )?;
         let address = Memory::address_from_bytes(
-            &operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
-                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES],
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES]
+                .to_vec(),
         )?; // 2+(2*2).. 6..14
         let src =
             self.get_reg(operand_bytes[constant::OPCODE_BYTES..constant::REGISTER_BYTES].to_vec())?; // 0..2
@@ -682,8 +688,8 @@ impl Runtime {
         let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
 
         let address: u64 = Memory::address_from_bytes(
-            &operand_bytes
-                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::ADDRESS_BYTES], // 4..12
+            operand_bytes[constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::ADDRESS_BYTES]
+                .to_vec(), // 4..12
         )?;
 
         self.spr.pc = address;
@@ -702,8 +708,9 @@ impl Runtime {
                 .to_vec(),
         )?;
         let address = Memory::address_from_bytes(
-            &operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
-                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES + constant::ADDRESS_BYTES],
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES + constant::ADDRESS_BYTES]
+                .to_vec(),
         )?;
         let return_value;
         if condition == 0 {
@@ -727,8 +734,9 @@ impl Runtime {
                 .to_vec(),
         )?;
         let address = Memory::address_from_bytes(
-            &operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
-                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES + constant::ADDRESS_BYTES],
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES + constant::ADDRESS_BYTES]
+                .to_vec(),
         )?;
         let return_value;
         if condition != 0 {

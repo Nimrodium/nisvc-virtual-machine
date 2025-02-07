@@ -14,10 +14,20 @@ pub struct Memory {
 }
 // [MMIO][PROGRAM][DATARAM]
 impl Memory {
+    /// initializes ram with bytes size as 0xFF
+    fn init_ram(bytes: usize) -> Vec<u8> {
+        let ram: Vec<u8> = vec![0xFF; bytes];
+        println!(
+            "ram initalized as {bytes} bytes ({}KB)",
+            bytes as f32 / 1000 as f32
+        );
+        // ram
+        vec![]
+    }
     pub fn new() -> Self {
         Memory {
             program: vec![],
-            ram: vec![],
+            ram: Memory::init_ram(1000),
             mmio_base: 0, // always zero unless i put something under mmio
             program_base: constant::MMIO_ADDRESS_SPACE as u64, // change this when i actually add an mmio system
             // always ZERO now. // rom_exec_base: 0,                              // start of program section
@@ -42,10 +52,11 @@ impl Memory {
         }
         Ok(())
     }
-    pub fn address_from_bytes(address_bytes: &[u8]) -> Result<u64, String> {
+    pub fn address_from_bytes(address_bytes: Vec<u8>) -> Result<u64, String> {
+        println!("address bytes :: {address_bytes:?}");
         let address_bytes_arr: [u8; 8] = match address_bytes.try_into() {
             Ok(arr) => arr,
-            Err(why) => return Err(format!("error building address from bytes :: {why}")),
+            Err(why) => return Err(format!("error building address from bytes :: {why:?}")),
         };
         let address = u64::from_le_bytes(address_bytes_arr);
         Ok(address)

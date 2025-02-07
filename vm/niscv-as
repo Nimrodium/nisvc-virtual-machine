@@ -22,7 +22,7 @@ MMIO_ADDRESS_SPACE = 42
 LABEL = "!"
 LITERAL = "$"
 ASSEMBLY_POINTER = "."
-BASE_RAM_POINTER = "@"
+# BASE_RAM_POINTER = "@"
 
 SEPERATOR = ";"
 COMMENT = "//"
@@ -100,7 +100,10 @@ register_table = {
     "o5":27,
 }
 
-def handle_error(type:str,error:str) -> NoReturn :
+def handle_warning(type:str,error:str):
+    print(f"{YELLOW} Assembly {type.capitalize()} Warning :: {RESET} {error}")
+
+def handle_error(type:str,error:str,warning:bool=False) -> NoReturn :
     print(f"{RED} Assembly {type.capitalize()} Error :: {YELLOW} {error}")
     exit(1)
 
@@ -111,16 +114,16 @@ def parse_expression(expr:list[str|int]) -> int:
         literal_expr+=str(token)
 
     literal_expr = re.sub(r'(\d)(\()', r'\1*\2', literal_expr) # i did NOT make this, NO credit to ME
-    print(literal_expr)
+    # print(literal_expr)
     try:
         result = eval(literal_expr)
     except SyntaxError as e:
         handle_error("Syntax",f"{literal_expr} failed to evaluate :: {e} ::")
     return result
 
-def tokenize_expression(statement:str,base_ram_address:int,assembly_pointer:int,labels:dict[str,int]) -> list[str|int]:
+def tokenize_expression(statement:str,labels:dict[str,int]) -> list[str|int]:
     # input exm : "@+1-2"
-    print(statement)
+    # print(statement)
     state = 0
     intermediate : list[str|int] = []
     operations = ['+','-','*','/','%',' ','(',')']
@@ -132,7 +135,7 @@ def tokenize_expression(statement:str,base_ram_address:int,assembly_pointer:int,
     label_buffer : str = ""
     for char in statement:
         if char.isdigit() and not building_label:
-            print(f"found digit : {char}")
+            # print(f"found digit : {char}")
             building_int = True
             integer_buffer+=char
         elif char.startswith(LABEL) and not building_int:
@@ -153,6 +156,8 @@ def tokenize_expression(statement:str,base_ram_address:int,assembly_pointer:int,
                 intermediate.append(char)
         elif building_label and not building_int:
                     label_buffer+=char
+        elif char == ASSEMBLY_POINTER:
+            intermediate.append(char)
         else:
             handle_error(f"Syntax",f"unexpected character [ {char} ] in {statement}")
 
@@ -164,7 +169,7 @@ def tokenize_expression(statement:str,base_ram_address:int,assembly_pointer:int,
     delabeled_intermediate : list[int|str] = []
     for element in intermediate:
         if isinstance(element,str):
-            if element.startswith(LABEL):
+            if element.startswith(LABEL) or element == ASSEMBLY_POINTER:
                 if element in labels.keys():
                     new = labels[element]
                 else:
@@ -180,12 +185,15 @@ def tokenize_expression(statement:str,base_ram_address:int,assembly_pointer:int,
 
     return delabeled_intermediate
 
-def evaluate_math_expression(expr:str,base_ram_address:int,assembly_pointer:int,labels:dict[str,int]) -> int:
-    tokenized = tokenize_expression(expr,base_ram_address,assembly_pointer,labels)
+def evaluate_literal_definition(expr:str,labels:dict[str,int]) -> int:
+    if not expr.startswith(LITERAL):
+        handle_error("Syntax",f"expression {expr} is not a valid expression (must start with {LITERAL})")
+
+    tokenized = tokenize_expression(expr[1:],labels)
     result : int = parse_expression(tokenized)
     return result
 
-def immediate_byte_size(value) -> int:
+def immediate_byte_size(value:int) -> int:
     if value > U64_MAX: # cannot be fit
         raise ValueError(f"immediate {value} over u64 limit {U64_MAX}")
     if value < 0:
@@ -227,6 +235,7 @@ def is_immediate(operand: str) -> bool:
 #
 def calc_instruction_size(instruction:list[tuple[int|str,Tp,int]]) -> int:
     size = 0
+    # print(f"instruction {instruction}")
     for element in instruction:
         size+=element[2]
     return size
@@ -250,42 +259,53 @@ def resolve_program_labels(source:list[str],intermediate:list[list[tuple[int|str
             i+=1
     return labels
 
+#
+def write_ram(ram:list[int],new:list[int]) -> list[int]:
+
+    return ram
+
 # reads data section and returns data byte sequence and label table
 # ram_base == last address of program + 1
 def parse_data_section(source:list[str]) -> tuple[bytes,dict[str,int]]:
     labels : dict[str,int] = {}
     ram : list[int] = []
     for line in source:
-        print(f"data : {line}")
+        asm_ptr = len(ram)
+        labels.update({ASSEMBLY_POINTER:asm_ptr})
+        # print(f"data : {line}")
         label,_,rest = line.partition(" ")
         command,_,data = rest.partition(" ")
-        print(f"label: {label}\ncommand: {command}")
+        # print(f"label: {label}\ncommand: {command}")
         match command:
             case "equ":
-                # literal = data.strip()
+                literal = data.strip()
+                entry = {label:evaluate_literal_definition(literal,labels)}
+                # print(entry)
+                labels.update(entry)
                 # if not literal.isdigit():
                 #     handle_error("Syntax",f"{literal} is not a valid literal, which is expected by {command}")
                 # labels.update({label:int(literal)})
-                pass
-
             case _:
                 handle_error("Syntax",f"unrecognized data definition command [ {command} ]")
 
 
     return (bytes([0]),labels)
 
-def merge_program_and_data_labels(program_labels:dict[str,int],data_labels:dict[str,int],program_length) -> dict[str,int]:
+def merge_program_and_data_labels(program_labels:dict[str,int],data_labels:dict[str,tuple[int,bool]],program_length) -> dict[str,int]:
     # data labels are relative to start of data
     # program labels are already absolute (accounts for MMIO address space)
     # just add the length of program to all and then merge
 
     # account for end of exec marker and move 1 so that data0 is not in program space
-    program_length+=OPCODE_BYTES+1
-
-    for label_name,label_address in data_labels.items():
+    ram_base = program_length + OPCODE_BYTES + 1
+    print(f"ram base {ram_base}")
+    for label_name,label_value in data_labels.items():
         if label_name in program_labels:
             handle_error("LabelAlreadyDefined",f"program and data label collision {label_name} already in program labels")
-        program_labels.update({label_name:label_address+program_length})
+        if label_value[1]: # apply offset flag
+            program_labels.update({label_name:label_value[0]+ram_base})
+        else:
+            program_labels.update({label_name:label_value[0]})
     return program_labels
 
 def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
@@ -331,18 +351,13 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
                     instruction.append((operand,Tp.Addr,ADDRESS_BYTES))
 
                 case Tp.Imm:
-                    # if not is_immediate(operand):
-                    #     handle_error("OperationSyntax",f"{operand} not a valid immediate which is expected by {operation_str} operation at position {i}")
-                    # immediate : int = int(operand[1:])
-                    # instruction.append((immediate,Tp.Imm,immediate_byte_size(immediate)+1))
-
                     if operand[1:].isdigit() and operand.startswith(LITERAL):
-                        print("literal")
+                        # print("literal")
                         immediate = int(operand[1:])
                         instruction.append((immediate,Tp.Imm,immediate_byte_size(immediate)+1))
 
                     elif operand.startswith(LABEL):
-                        print("palceholder label")
+                        # print("palceholder label")
                         instruction.append((operand,Tp.Imm,0xDEADBEEF))
                     else:
                         handle_error("OperationSyntax",f"{operand} not a valid immediate which is expected by {operation_str} operation at position {i}")
@@ -356,43 +371,81 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
 
 def calculate_program_byte_length(intermediate_program:list[list[tuple[int|str,Tp,int]]]) -> int:
     length = MMIO_ADDRESS_SPACE
+
     for instruction in intermediate_program:
         length+=calc_instruction_size(instruction)
+        # print(length)
     return length
 
-def insert_addresses(labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int]]]) -> list[list[tuple[int,Tp,int]]]:
-    resolved_intermediate : list[list[tuple[int,Tp,int]]] = []
+def resolve_immediates(labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int]]]) -> list[list[tuple[str|int,Tp,int]]]:
+    resolved_intermediate : list[list[tuple[int|str,Tp,int]]] = []
     for instruction in intermediate_program:
-        resolved_instruction : list[tuple[int,Tp,int]] = []
-        for object,data_type,type in instruction:
-            if data_type == Tp.Addr:
-                assert isinstance(object,str)
-                # if hardcoded address (for stuff like MMIO)
-                if object.isdigit():
-                    object = int(object)
-                # if its not in keys
-                elif object in labels.keys():
-                    assert isinstance(object,str)
-                    object = labels[object]
-                # print(f"found label {object} resolving to {labels[object]}")
-                else:
-                   handle_error("UnknownLabel",f"{object} was never defined")
-            elif data_type == Tp.Imm and isinstance(object,str):
-                # placeholder object, replace!
-                # if object.isdigit():
+        resolved_instruction : list[tuple[int|str,Tp,int]] = []
+        for object,data_type,size in instruction:
+
+            if isinstance(object,str) and data_type == Tp.Imm: # if labeled immediate
+
                 if object in labels.keys():
+                    # print(f"{RED}imm {object} is {labels[object]}{RESET}")
                     object = labels[object]
-                    type = immediate_byte_size(object)+1 # +1 for preliminary size declaration byte itself
+                    size = immediate_byte_size(object)
                 else:
                     handle_error("UnknownLabel",f"{object} was never defined")
-
-            assert isinstance(object,int)
-            new : tuple[int,Tp,int]= (object,data_type,type)
-            # print(new)
-            resolved_instruction.append(new)
-
+            resolved_instruction.append((object,data_type,size))
+            # print(f"{RED}{resolved_instruction}{RESET}")
         resolved_intermediate.append(resolved_instruction)
     return resolved_intermediate
+
+def resolve_program_addresses(program_labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int]]]) -> list[list[tuple[str|int,Tp,int]]]:
+    # first collect program labels
+    # then insert
+    resolved_intermediate : list[list[tuple[int|str,Tp,int]]] = []
+    for instruction in intermediate_program:
+        resolved_instruction : list[tuple[int|str,Tp,int]] = []
+        for object,data_type,size in instruction:
+            if isinstance(object,str) and data_type == Tp.Addr: # labeled address
+                if object.isdigit():
+                    object = int(object)
+                    size = immediate_byte_size(object)+1
+                elif object in program_labels.keys():
+                    object = program_labels[object]
+                else:
+                    handle_warning("UnknownLabel",f"{object} hasn't been defined")
+            # assert isinstance(object,int)
+            resolved_instruction.append((object,data_type,size))
+        resolved_intermediate.append(resolved_instruction)
+    return resolved_intermediate
+
+def resolve_ram_addresses(labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int]]],ram_base:int) -> list[list[tuple[int,Tp,int]]]:
+    resolved_intermediate : list[list[tuple[int,Tp,int]]] = []
+    print(labels)
+    for instruction in intermediate_program:
+        resolved_instruction : list[tuple[int,Tp,int]] = []
+        for object,data_type,size in instruction:
+            if isinstance(object,str) and data_type == Tp.Addr: # labeled address
+                if object in labels.keys():
+                    print(f"{object} is {labels[object]+ram_base}")
+                    object = labels[object] + ram_base
+                else:
+                    handle_error("UnknownLabel",f"{object} was never defined")
+            print(object)
+            assert isinstance(object,int)
+            resolved_instruction.append((object,data_type,size))
+        resolved_intermediate.append(resolved_instruction)
+    return resolved_intermediate
+
+def resolve_labels(program_source:list[str],labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int]]]) -> list[list[tuple[int,Tp,int]]]:
+
+    resolved_immediate_program = resolve_immediates(labels,intermediate_program)
+    ram_base = calculate_program_byte_length(resolved_immediate_program)
+    ram_base += OPCODE_BYTES # to account for end of exec opcode
+
+    program_labels : dict[str,int] = resolve_program_labels(program_source,resolved_immediate_program)
+    resolved_program_addresses_program = resolve_program_addresses(program_labels,resolved_immediate_program)
+
+    resolved_all = resolve_ram_addresses(labels,resolved_program_addresses_program,ram_base)
+    return resolved_all
+
 
 def expand_bytes(intermediate_program:list[list[tuple[int,Tp,int]]]) -> bytes:
     resolved_program_bytes : list[int] = []
@@ -445,15 +498,16 @@ def nisvc_ef_build(name:str,data:bytes,program:bytes):
     print(f"{GREEN} assembled binary {name} {RESET}")
 
 def assemble(data_source:list[str],program_source:list[str]) -> tuple[bytes,bytes]:
+
     assembled_data,data_labels = parse_data_section(data_source)
+    print(f"data labels {data_labels}")
 
     intermediate_program = assemble_program(program_source)
-    program_labels = resolve_program_labels(program_source,intermediate_program)
-    program_length = calculate_program_byte_length(intermediate_program)
-    merged_labels = merge_program_and_data_labels(program_labels,data_labels,program_length)
+    print(f"intermediate :\n{intermediate_program}")
 
-    resolved_intermediate = insert_addresses(merged_labels,intermediate_program)
-    program = expand_bytes(resolved_intermediate)
+    resolved_label_intermediate = resolve_labels(program_source,data_labels,intermediate_program)
+    print(f"resolved intermediate :\n{resolved_label_intermediate}")
+    program = expand_bytes(resolved_label_intermediate)
 
     return (assembled_data,program)
 
@@ -534,8 +588,15 @@ def main():
     data,program = parse_initial(in_file)
     asm_data,asm_program = assemble(data,program)
     nisvc_ef_build(out_file,asm_data,asm_program)
-# main()
-labels = {"!label":16,"!louis":12,"!spoink":1234}
-result = evaluate_math_expression(sys.argv[1],0,0,labels)
-print(result)
-# eval_expression((1,"+",2))
+main()
+
+# special_ptrs : dict[str,int] = {
+#     ASSEMBLY_POINTER:0,
+# }
+
+# labels = {"!label":16,"!louis":12,"!spoink":1234}
+# labels.update(special_ptrs)
+
+# result = evaluate_literal_definition(sys.argv[1],labels)
+# print(result)
+# # eval_expression((1,"+",2))
