@@ -4,6 +4,7 @@ use crate::{
 };
 use rustyline::{error::ReadlineError, history::FileHistory, DefaultEditor, Editor};
 use std::{
+    fs::read_dir,
     io::{self, Write},
     path::Path,
     process::exit,
@@ -74,6 +75,7 @@ impl Shell {
             "reset" => self.cmd_reset(cmd),
             "pr-reg" => self.cmd_print_register(cmd),
             "dump" => self.cmd_dump(cmd),
+            "ls" => self.cmd_ls(cmd),
             "" => Ok(()),
             _ => Err(format!("unrecognized command [{}]", command_word)),
         }
@@ -148,6 +150,30 @@ impl Shell {
             "signed_dec: {}\nunsigned_dec: {register_value}\nhex: {register_value:#x}",
             register_value as isize
         );
+        Ok(())
+    }
+    fn cmd_ls(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+        let directory = match cmd.next() {
+            Some(dir) => dir.trim(),
+            None => ".",
+        };
+        let output = match read_dir(directory) {
+            Ok(output) => output,
+            Err(why) => return Err(format!("could not read directory {directory} {why}")),
+        };
+        let mut output_string = String::new();
+        for entry in output {
+            let entry_unwrapped = match entry {
+                Ok(entry) => entry,
+                Err(why) => return Err(format!("could not read directory entry {}", why)),
+            };
+            let entry_name = entry_unwrapped.file_name();
+            // let entry_type = entry_unwrapped.file_type();
+            let str_entry = format!("{entry_name:#?} ");
+            output_string.push_str(&str_entry);
+        }
+
+        println!("{output_string}");
         Ok(())
     }
     fn cmd_dump(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
