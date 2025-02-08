@@ -36,7 +36,7 @@ A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose regist
     > resets program to be executed again
   - `exit`
     > exits shell
-   
+
 # instruction Set
   - mov
   - movim
@@ -52,14 +52,28 @@ A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose regist
   - not
   - shl
   - shr
+  - rotl
+  - rotr
+  - neg
+  - jmp
+  - jifnz
+  - pr
+  - inc
+  - dec
+  - push
+  - pop
+  - call
+  - ret
 
 # Assembly Syntax
 - sections are enclosed in brackets
 - comments are denoted by two backslashes `//`
 - instructions may be seperated by a newline or semicolon (inline code is allowed)
 - literals are prefixed with `$`
+- addresses relative to ram_base are prefixed with `@`
 - labels are prefixed with`!`
 
+all operations are register based, the only instructions which accepts a non-register are `movim` and the jump instructions
 
 ```assembly
 data {
