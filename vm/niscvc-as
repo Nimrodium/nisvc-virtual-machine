@@ -22,6 +22,7 @@ SIGNATURE = b"NISVC-EF"
 DEFAULT_BINARY_NAME = "nisvc.out"
 LABEL = "!"
 LITERAL = "$"
+ADDRESS = "@"
 ASSEMBLY_POINTER = "."
 # BASE_RAM_POINTER = "@"
 
@@ -46,8 +47,8 @@ opcode_table : dict[str,tuple[int,int,list]] = {
     "nop":(0x00,0,[]),
     "mov":(0x01,2,[Tp.Reg,Tp.Reg]),
     "movim":(0x02,2,[Tp.Reg,Tp.Imm]),
-    "load":(0x03,3,[Tp.Reg,Tp.Reg,Tp.Addr]),
-    "store":(0x04,3,[Tp.Addr,Tp.Reg,Tp.Reg]),
+    "load":(0x03,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
+    "store":(0x04,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
 
     "add":(0x05,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
     "sub":(0x06,3,[Tp.Reg,Tp.Reg,Tp.Reg]),
@@ -237,53 +238,24 @@ def is_immediate(operand: str) -> bool:
     return operand.startswith(LITERAL) and operand[1:].isdigit()
 # list[list[tuple[int,tuple[int]]]]
 #
-def calc_instruction_size(instruction:list[tuple[int|str,Tp,int]]) -> int:
+def calc_instruction_size(instruction:list[tuple[int|str,Tp,int,bool]]) -> int:
     size = 0
     for element in instruction:
         size+=element[2]
     return size
 
-# returns label -> program address dictionary for the program section
-# def resolve_program_labels(source:list[str],intermediate:list[list[tuple[int|str,Tp,int]]]) -> dict[str,int]:
-#     labels : dict[str,int] = {}
-#     head = MMIO_ADDRESS_SPACE
-#     i = 0
-#     print(f"THERE SHOULD BE NO {0xDEADBEEF} IN HERE !!! VVV \n {intermediate}")
-#     for line in source:
-#         print(f"Processing line: {line} head {hex(head)}")  # Debug
-#         if line.startswith(LABEL):
-#             label_name = line.lower().strip().partition(" ")[0]
-#             entry = {label_name:head}
-#             print(f"program label [ {entry} ] [ {hex(entry[label_name])} ]")
-#             labels.update(entry)
-#         else:
-#             # advance head
-
-#             head+= calc_instruction_size(intermediate[i])
-#             i+=1
-#     return labels
-
-def resolve_program_labels(source:list[str],intermediate:list[list[tuple[int|str,Tp,int]]]) -> dict[str,int]:
+def resolve_program_labels(source:list[str],intermediate:list[list[tuple[int|str,Tp,int,bool]]]) -> dict[str,int]:
     labels : dict[str,int] = {}
     head = MMIO_ADDRESS_SPACE
     i = 0
     for line in source:
-        print(f"\nProcessing line: [{line}]")
-        print(f"Current head: {head} (0x{head:x})")
-
         if line.startswith(LABEL):
             label_name = line.lower().strip().partition(" ")[0]
-            print(f"Defining label {label_name} at {head} (0x{head:x})")
             labels.update({label_name:head})
         else:
             inst_size = calc_instruction_size(intermediate[i])
-            print(f"Instruction size: {inst_size}")
-            print(f"Instruction: {intermediate[i]}")
             head += inst_size
-            print(f"New head: {head} (0x{head:x})")
             i += 1
-
-    print(f"\nFinal label table: {labels}")
     return labels
 #
 def write_ram(ram:list[int],new:list[int]) -> list[int]:
@@ -329,8 +301,8 @@ def merge_program_and_data_labels(program_labels:dict[str,int],data_labels:dict[
             program_labels.update({label_name:label_value[0]})
     return program_labels
 
-def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
-    program : list[list[tuple[int|str,Tp,int]]] = []
+def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int,bool]]]:
+    program : list[list[tuple[int|str,Tp,int,bool]]] = []
     # program_labels : dict[str,int] =
 
 
@@ -355,7 +327,7 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
 
         if len(operands_str) != fields:
             handle_error("OperationSyntax",f"incorrect amount of operands :: {operation_str} expects {fields} while only {len(operands_str)} were provided")
-        instruction : list[tuple[int|str,Tp,int]] = [(operation_code,Tp.Op,OPCODE_BYTES)]
+        instruction : list[tuple[int|str,Tp,int,bool]] = [(operation_code,Tp.Op,OPCODE_BYTES,False)]
         for i,operand in enumerate(operands_str):
 
             data_type : Tp = types[i]
@@ -364,18 +336,27 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
                     if operand not in register_table.keys():
                         handle_error("OperationSyntax",f"{operand} not a valid register which is expected by {operation_str} operation at position {i+5}")
                     resolved_register = register_table[operand]
-                    instruction.append((resolved_register,Tp.Reg,REGISTER_BYTES))
+                    instruction.append((resolved_register,Tp.Reg,REGISTER_BYTES,False))
 
                 case Tp.Addr:
-                    instruction.append((operand,Tp.Addr,ADDRESS_BYTES))
+                    instruction.append((operand,Tp.Addr,ADDRESS_BYTES,False))
 
                 case Tp.Imm:
-                    if operand[1:].isdigit() and operand.startswith(LITERAL):
+                    if operand.startswith(LITERAL):
+                        is_relative_address = False
+                    elif operand.startswith(ADDRESS):
+                        is_relative_address = True
+                    else:
+                        handle_error("Syntax",f"invalid Immediate {operand}")
+                    if operand[1:].isdigit():
                         immediate = int(operand[1:])
-                        instruction.append((immediate,Tp.Imm,immediate_byte_size(immediate)+1))
-
-                    elif operand.startswith(LABEL):
-                        instruction.append((operand,Tp.Imm,0xDEADBEEF))
+                        if is_relative_address:
+                            size = ADDRESS_BYTES
+                        else:
+                            size = immediate_byte_size(immediate)+1
+                        instruction.append((immediate,Tp.Imm,size,is_relative_address))
+                    elif operand[1:].startswith(LABEL):
+                        instruction.append((operand[1:],Tp.Imm,0xDEADBEEF,is_relative_address))
                     else:
                         handle_error("OperationSyntax",f"{operand} not a valid immediate which is expected by {operation_str} operation at position {i}")
 
@@ -385,37 +366,36 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
         program.append(instruction)
     return program
 
-def calculate_program_byte_length(intermediate_program:list[list[tuple[int|str,Tp,int]]]) -> int:
+def calculate_program_byte_length(intermediate_program:list[list[tuple[int|str,Tp,int,bool]]]) -> int:
     length = MMIO_ADDRESS_SPACE
 
     for instruction in intermediate_program:
         length+=calc_instruction_size(instruction)
     return length
-
-def resolve_immediates(labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int]]]) -> list[list[tuple[str|int,Tp,int]]]:
-    resolved_intermediate : list[list[tuple[int|str,Tp,int]]] = []
+def resolve_literals(labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int,bool]]]) -> list[list[tuple[str|int,Tp,int,bool]]]:
+    resolved_intermediate : list[list[tuple[int|str,Tp,int,bool]]] = []
     for instruction in intermediate_program:
-        resolved_instruction : list[tuple[int|str,Tp,int]] = []
-        for object,data_type,size in instruction:
+        resolved_instruction : list[tuple[int|str,Tp,int,bool]] = []
+        for object,data_type,size,is_relative_address in instruction:
 
-            if isinstance(object,str) and data_type == Tp.Imm: # if labeled immediate
+            if isinstance(object,str) and data_type == Tp.Imm and not is_relative_address: # if labeled immediate
 
                 if object in labels.keys():
                     object = labels[object]
                     size = immediate_byte_size(object)+1 # for size byte
                 else:
                     handle_error("UnknownLabel",f"{object} was never defined")
-            resolved_instruction.append((object,data_type,size))
+            resolved_instruction.append((object,data_type,size,is_relative_address))
         resolved_intermediate.append(resolved_instruction)
     return resolved_intermediate
 
-def resolve_program_addresses(program_labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int]]]) -> list[list[tuple[str|int,Tp,int]]]:
+def resolve_program_addresses(program_labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int,bool]]]) -> list[list[tuple[str|int,Tp,int,bool]]]:
     # first collect program labels
     # then insert
-    resolved_intermediate : list[list[tuple[int|str,Tp,int]]] = []
+    resolved_intermediate : list[list[tuple[int|str,Tp,int,bool]]] = []
     for instruction in intermediate_program:
-        resolved_instruction : list[tuple[int|str,Tp,int]] = []
-        for object,data_type,size in instruction:
+        resolved_instruction : list[tuple[int|str,Tp,int,bool]] = []
+        for object,data_type,size,is_relatvie_address in instruction:
             if isinstance(object,str) and data_type == Tp.Addr: # labeled address
                 if object.isdigit():
                     object = int(object)
@@ -425,20 +405,24 @@ def resolve_program_addresses(program_labels:dict[str,int],intermediate_program:
                 else:
                     handle_warning("UnknownLabel",f"{object} hasn't been defined")
             # assert isinstance(object,int)
-            resolved_instruction.append((object,data_type,size))
+            resolved_instruction.append((object,data_type,size,is_relatvie_address))
         resolved_intermediate.append(resolved_instruction)
     return resolved_intermediate
 
-def resolve_ram_addresses(labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int]]],ram_base:int) -> list[list[tuple[int,Tp,int]]]:
+def resolve_relative_addresses(labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int,bool]]],ram_base:int) -> list[list[tuple[int,Tp,int]]]:
     resolved_intermediate : list[list[tuple[int,Tp,int]]] = []
     print(labels)
     for instruction in intermediate_program:
         resolved_instruction : list[tuple[int,Tp,int]] = []
-        for object,data_type,size in instruction:
-            if isinstance(object,str) and data_type == Tp.Addr: # labeled address
-                if object in labels.keys():
-                    print(f"{object} is {labels[object]+ram_base}")
-                    object = labels[object] + ram_base
+        for object,data_type,size,is_relative_address in instruction:
+            if is_relative_address:
+                if isinstance(object,str):
+                    if object[1:] in labels.keys():
+                        print(f"{object} is {labels[object]+ram_base}")
+                        object = labels[object] + ram_base
+                elif isinstance(object,int):
+                    print(f"found relative literal {object} offsetting to {object+ram_base}")
+                    object = object+ram_base
                 else:
                     handle_error("UnknownLabel",f"{object} was never defined")
             assert isinstance(object,int)
@@ -446,16 +430,17 @@ def resolve_ram_addresses(labels:dict[str,int],intermediate_program:list[list[tu
         resolved_intermediate.append(resolved_instruction)
     return resolved_intermediate
 
-def resolve_labels(program_source:list[str],labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int]]]) -> list[list[tuple[int,Tp,int]]]:
+def resolve_labels(program_source:list[str],labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int,bool]]]) -> list[list[tuple[int,Tp,int]]]:
 
-    resolved_immediate_program = resolve_immediates(labels,intermediate_program)
-    ram_base = calculate_program_byte_length(resolved_immediate_program)
+    resolved_literal_program = resolve_literals(labels,intermediate_program)
+    ram_base = calculate_program_byte_length(resolved_literal_program)
     ram_base += OPCODE_BYTES # to account for end of exec opcode
+    print(f"ram_base: {ram_base}")
 
-    program_labels : dict[str,int] = resolve_program_labels(program_source,resolved_immediate_program)
-    resolved_program_addresses_program = resolve_program_addresses(program_labels,resolved_immediate_program)
+    program_labels : dict[str,int] = resolve_program_labels(program_source,resolved_literal_program)
+    resolved_program_addresses_program = resolve_program_addresses(program_labels,resolved_literal_program)
 
-    resolved_all = resolve_ram_addresses(labels,resolved_program_addresses_program,ram_base)
+    resolved_all = resolve_relative_addresses(labels,resolved_program_addresses_program,ram_base)
     return resolved_all
 
 

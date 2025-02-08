@@ -27,9 +27,9 @@ A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose regist
   - `load <binary file path>`
     > loads the binary file into the virtual machine
   - `exec`
-    > executes the program
+    > executes the loaded binary
   - `pr-reg <register>`
-    > prints <register> in decimal and hexidecimal
+    > prints register in decimal and hexidecimal
   - `dump <program/ram>`
     > dumps program rom or data ram
   - `reset`

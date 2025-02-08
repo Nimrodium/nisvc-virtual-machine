@@ -4,17 +4,11 @@
 use std::{fs::File, io::Read, path::Path};
 
 use crate::{
-    constant::{self, OpcodeSize, RegisterSize, OPCODE_BYTES},
+    constant::{self, OpcodeSize},
     memory::Memory,
     opcode::Opcode,
 };
 
-enum Data {
-    GeneralRegisters,
-    SpecialRegisters,
-    Ram,
-    Rom,
-}
 pub struct GeneralPurposeRegisters {
     pub r1: u64,
     pub r2: u64,
@@ -290,10 +284,6 @@ impl Runtime {
         Ok(())
     }
 
-    /// dumps state
-    pub fn dump(&self, data: Data) -> String {
-        todo!()
-    }
     pub fn throw_runtime_error(self, why: &str) {
         println!("runtime error!! :: {}", why)
     }
@@ -546,12 +536,11 @@ impl Runtime {
     /// - r2 -- size to read in (up to 8 bytes)
     /// - buffer -- start of memory address range
     fn op_load(&mut self) -> Result<usize, String> {
-        let bytes_read =
-            constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES; // reg,reg,addr
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3; // + constant::ADDRESS_BYTES; // reg,reg,addr
         let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
-        let address: u64 = Memory::address_from_bytes(
+        let address: u64 = self.get_reg(
             operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
-                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES]
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3]
                 .to_vec(), // 4..12
         )?;
         let size = self.get_reg(
@@ -575,39 +564,26 @@ impl Runtime {
         Ok(bytes_read)
     }
     fn op_store(&mut self) -> Result<usize, String> {
-        let bytes_read =
-            constant::OPCODE_BYTES + constant::ADDRESS_BYTES + constant::REGISTER_BYTES * 2;
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3;
         // addr,reg,reg
         let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
-        // let size = self.get_reg(
-        //     operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
-        //         ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2] // 2+2..2+2+2 4..6
-        //         .to_vec(),
-        // )?;
-        // let address = Memory::address_from_bytes(
-        //     operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
-        //         ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES]
-        //         .to_vec(),
-        // )?; // 2+(2*2).. 6..14
-        // let src =
-        //     self.get_reg(operand_bytes[constant::OPCODE_BYTES..constant::REGISTER_BYTES].to_vec())?; // 0..2
-        // let src_bytes = &u64::to_le_bytes(src)[0..size as usize]; // need to then trunicate src_bytes by size
 
-        let address = Memory::address_from_bytes(
-            operand_bytes[constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::ADDRESS_BYTES]
+        let address = self.get_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
                 .to_vec(),
         )?;
         let size = self.get_reg(
-            operand_bytes[constant::OPCODE_BYTES + constant::ADDRESS_BYTES
-                ..constant::OPCODE_BYTES + constant::ADDRESS_BYTES + constant::REGISTER_BYTES]
+            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES + constant::REGISTER_BYTES]
                 .to_vec(),
         )?;
         let src = self.get_reg(
             operand_bytes[constant::OPCODE_BYTES
-                + constant::ADDRESS_BYTES
+                + constant::REGISTER_BYTES
                 + constant::REGISTER_BYTES
                 ..constant::OPCODE_BYTES
-                    + constant::ADDRESS_BYTES
+                    + constant::REGISTER_BYTES
                     + constant::REGISTER_BYTES
                     + constant::REGISTER_BYTES]
                 .to_vec(),
