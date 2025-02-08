@@ -44,7 +44,7 @@ decode!(
         Add = 0x05 as isize,
         Sub = 0x06 as isize,
         Mult = 0x07 as isize,
-        Div = 0x08 as isize, // unimplemented at the moment
+        Div = 0x08 as isize,
 
         // bitwise
         Or = 0x09 as isize,
@@ -63,7 +63,15 @@ decode!(
         Jifz = 0x13 as isize,
         Jifnz = 0x14 as isize,
 
-        Pr = 0x015 as isize,
+        Pr = 0x15 as isize,
+        Inc = 0x16 as isize,
+        Dec = 0x17 as isize,
+
+        Push = 0x18 as isize,
+        Pop = 0x19 as isize,
+
+        Call = 0x1a as isize,
+        Ret = 0x1b as isize,
         // special
         End_of_exec_section = 0xFFFF as isize,
     }

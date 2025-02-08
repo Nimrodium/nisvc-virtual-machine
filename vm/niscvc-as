@@ -1,5 +1,5 @@
 #!/bin/python
-# simple nimcode assembler
+# NISVC architecture assembler
 
 # just a prototyping file for when i rewrite the assembler in rust, but it does fully work.
 # and i could just leave it like this honestly.
@@ -18,7 +18,8 @@ REGISTER_BYTES = 1
 OPCODE_BYTES = 1
 ADDRESS_BYTES = 8
 MMIO_ADDRESS_SPACE = 42
-
+SIGNATURE = b"NISVC-EF"
+DEFAULT_BINARY_NAME = "nisvc.out"
 LABEL = "!"
 LITERAL = "$"
 ASSEMBLY_POINTER = "."
@@ -68,6 +69,15 @@ opcode_table : dict[str,tuple[int,int,list]] = {
     "jifnz":(0x14,2,[Tp.Reg,Tp.Addr]),
 
     "pr":(0x15,1,[Tp.Reg]),
+    "inc":(0x16,1,[Tp.Reg]),
+    "dec":(0x17,1,[Tp.Reg]),
+
+    "push":(0x18,1,[Tp.Reg]),
+    "pop":(0x19,1,[Tp.Reg]),
+
+    "call":(0x1a,1,[Tp.Addr]),
+    "ret":(0x1b,0,[]),
+
 }
 
 register_table = {
@@ -114,7 +124,6 @@ def parse_expression(expr:list[str|int]) -> int:
         literal_expr+=str(token)
 
     literal_expr = re.sub(r'(\d)(\()', r'\1*\2', literal_expr) # i did NOT make this, NO credit to ME
-    # print(literal_expr)
     try:
         result = eval(literal_expr)
     except SyntaxError as e:
@@ -123,7 +132,6 @@ def parse_expression(expr:list[str|int]) -> int:
 
 def tokenize_expression(statement:str,labels:dict[str,int]) -> list[str|int]:
     # input exm : "@+1-2"
-    # print(statement)
     state = 0
     intermediate : list[str|int] = []
     operations = ['+','-','*','/','%',' ','(',')']
@@ -135,7 +143,6 @@ def tokenize_expression(statement:str,labels:dict[str,int]) -> list[str|int]:
     label_buffer : str = ""
     for char in statement:
         if char.isdigit() and not building_label:
-            # print(f"found digit : {char}")
             building_int = True
             integer_buffer+=char
         elif char.startswith(LABEL) and not building_int:
@@ -165,7 +172,6 @@ def tokenize_expression(statement:str,labels:dict[str,int]) -> list[str|int]:
         intermediate.append(int(integer_buffer))
     if label_buffer:
         intermediate.append(label_buffer)
-    print(intermediate)
     delabeled_intermediate : list[int|str] = []
     for element in intermediate:
         if isinstance(element,str):
@@ -181,7 +187,6 @@ def tokenize_expression(statement:str,labels:dict[str,int]) -> list[str|int]:
         else:
             handle_error("Internal",f"??? what is {element} and why is he here")
         delabeled_intermediate.append(new)
-    print(delabeled_intermediate)
 
     return delabeled_intermediate
 
@@ -225,7 +230,6 @@ def clean_source(source:str) -> list[str]:
             if line:
                cleaned_instructions.append(clean_line)
 
-        # print(cleaned_instructions)
         cleaned_source.extend(cleaned_instructions)
     return cleaned_source
 
@@ -235,30 +239,52 @@ def is_immediate(operand: str) -> bool:
 #
 def calc_instruction_size(instruction:list[tuple[int|str,Tp,int]]) -> int:
     size = 0
-    # print(f"instruction {instruction}")
     for element in instruction:
         size+=element[2]
     return size
 
 # returns label -> program address dictionary for the program section
+# def resolve_program_labels(source:list[str],intermediate:list[list[tuple[int|str,Tp,int]]]) -> dict[str,int]:
+#     labels : dict[str,int] = {}
+#     head = MMIO_ADDRESS_SPACE
+#     i = 0
+#     print(f"THERE SHOULD BE NO {0xDEADBEEF} IN HERE !!! VVV \n {intermediate}")
+#     for line in source:
+#         print(f"Processing line: {line} head {hex(head)}")  # Debug
+#         if line.startswith(LABEL):
+#             label_name = line.lower().strip().partition(" ")[0]
+#             entry = {label_name:head}
+#             print(f"program label [ {entry} ] [ {hex(entry[label_name])} ]")
+#             labels.update(entry)
+#         else:
+#             # advance head
+
+#             head+= calc_instruction_size(intermediate[i])
+#             i+=1
+#     return labels
+
 def resolve_program_labels(source:list[str],intermediate:list[list[tuple[int|str,Tp,int]]]) -> dict[str,int]:
     labels : dict[str,int] = {}
     head = MMIO_ADDRESS_SPACE
     i = 0
     for line in source:
+        print(f"\nProcessing line: [{line}]")
+        print(f"Current head: {head} (0x{head:x})")
 
         if line.startswith(LABEL):
-            # add label entry
             label_name = line.lower().strip().partition(" ")[0]
-            # print(f"{label_name} pointing to pc:{head}")
+            print(f"Defining label {label_name} at {head} (0x{head:x})")
             labels.update({label_name:head})
         else:
-            # advance head
-            # print(f"line [ {line} ] at pc:{head}")
-            head+= calc_instruction_size(intermediate[i])
-            i+=1
-    return labels
+            inst_size = calc_instruction_size(intermediate[i])
+            print(f"Instruction size: {inst_size}")
+            print(f"Instruction: {intermediate[i]}")
+            head += inst_size
+            print(f"New head: {head} (0x{head:x})")
+            i += 1
 
+    print(f"\nFinal label table: {labels}")
+    return labels
 #
 def write_ram(ram:list[int],new:list[int]) -> list[int]:
 
@@ -272,19 +298,14 @@ def parse_data_section(source:list[str]) -> tuple[bytes,dict[str,int]]:
     for line in source:
         asm_ptr = len(ram)
         labels.update({ASSEMBLY_POINTER:asm_ptr})
-        # print(f"data : {line}")
         label,_,rest = line.partition(" ")
         command,_,data = rest.partition(" ")
-        # print(f"label: {label}\ncommand: {command}")
         match command:
             case "equ":
                 literal = data.strip()
                 entry = {label:evaluate_literal_definition(literal,labels)}
-                # print(entry)
                 labels.update(entry)
-                # if not literal.isdigit():
-                #     handle_error("Syntax",f"{literal} is not a valid literal, which is expected by {command}")
-                # labels.update({label:int(literal)})
+
             case _:
                 handle_error("Syntax",f"unrecognized data definition command [ {command} ]")
 
@@ -314,7 +335,7 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
 
 
     for raw_instruction in source:
-        print(raw_instruction)
+        print(f"{raw_instruction}")
         if raw_instruction.startswith(LABEL):
             # skip labels
             continue
@@ -331,7 +352,6 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
             operands_str : list[str] = raw_instruction[1].split(",") # ["r1","r2"]
         else:
             operands_str = []
-        # print(f"operation: {operation_str}\noperands: {operands_str}")
 
         if len(operands_str) != fields:
             handle_error("OperationSyntax",f"incorrect amount of operands :: {operation_str} expects {fields} while only {len(operands_str)} were provided")
@@ -347,17 +367,14 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
                     instruction.append((resolved_register,Tp.Reg,REGISTER_BYTES))
 
                 case Tp.Addr:
-                    # print(f"found address label {operand} during assembly")
                     instruction.append((operand,Tp.Addr,ADDRESS_BYTES))
 
                 case Tp.Imm:
                     if operand[1:].isdigit() and operand.startswith(LITERAL):
-                        # print("literal")
                         immediate = int(operand[1:])
                         instruction.append((immediate,Tp.Imm,immediate_byte_size(immediate)+1))
 
                     elif operand.startswith(LABEL):
-                        # print("palceholder label")
                         instruction.append((operand,Tp.Imm,0xDEADBEEF))
                     else:
                         handle_error("OperationSyntax",f"{operand} not a valid immediate which is expected by {operation_str} operation at position {i}")
@@ -365,7 +382,6 @@ def assemble_program(source:list[str]) -> list[list[tuple[int|str,Tp,int]]]:
                 case Tp.Op:
                     handle_error("InternalSource","definition format error")
 
-        # print(f"instruction : {instruction}")
         program.append(instruction)
     return program
 
@@ -374,7 +390,6 @@ def calculate_program_byte_length(intermediate_program:list[list[tuple[int|str,T
 
     for instruction in intermediate_program:
         length+=calc_instruction_size(instruction)
-        # print(length)
     return length
 
 def resolve_immediates(labels:dict[str,int],intermediate_program:list[list[tuple[str|int,Tp,int]]]) -> list[list[tuple[str|int,Tp,int]]]:
@@ -386,13 +401,11 @@ def resolve_immediates(labels:dict[str,int],intermediate_program:list[list[tuple
             if isinstance(object,str) and data_type == Tp.Imm: # if labeled immediate
 
                 if object in labels.keys():
-                    # print(f"{RED}imm {object} is {labels[object]}{RESET}")
                     object = labels[object]
-                    size = immediate_byte_size(object)
+                    size = immediate_byte_size(object)+1 # for size byte
                 else:
                     handle_error("UnknownLabel",f"{object} was never defined")
             resolved_instruction.append((object,data_type,size))
-            # print(f"{RED}{resolved_instruction}{RESET}")
         resolved_intermediate.append(resolved_instruction)
     return resolved_intermediate
 
@@ -428,7 +441,6 @@ def resolve_ram_addresses(labels:dict[str,int],intermediate_program:list[list[tu
                     object = labels[object] + ram_base
                 else:
                     handle_error("UnknownLabel",f"{object} was never defined")
-            print(object)
             assert isinstance(object,int)
             resolved_instruction.append((object,data_type,size))
         resolved_intermediate.append(resolved_instruction)
@@ -455,17 +467,13 @@ def expand_bytes(intermediate_program:list[list[tuple[int,Tp,int]]]) -> bytes:
             expand : int = 0
             match data_type:
                 case Tp.Op:
-                    # print(f"{object} is opcode expanding to {OPCODE_BYTES}")
                     expand = OPCODE_BYTES
                 case Tp.Reg:
-                    # print(f"{object} is register expanding to {REGISTER_BYTES}")
                     expand = REGISTER_BYTES
                 case Tp.Addr:
-                    # print(f"{object} is address expanding to {ADDRESS_BYTES}")
                     expand = ADDRESS_BYTES
                 case Tp.Imm:
                     size = immediate_byte_size(object)
-                    # print(f"{object} is immediate, expanding to {size}")
                     resolved_program_bytes.append(size) # add size byte before immediate
                     expand = size
             try:
@@ -487,7 +495,7 @@ def expand_bytes(intermediate_program:list[list[tuple[int,Tp,int]]]) -> bytes:
 def nisvc_ef_build(name:str,data:bytes,program:bytes):
     with open(name, "wb") as f:
         # Write signature
-        f.write(b"NISVC-EF")
+        f.write(SIGNATURE)
 
         f.write((len(program)).to_bytes(8, byteorder='little'))
         f.write((len(data)).to_bytes(8, byteorder='little'))
@@ -517,7 +525,6 @@ def load_section(section:list[str]) -> tuple[list[str],int]: #section lines, las
     if last_char_open_check != OPEN_SECTION:
         handle_error("Format",f"section passed was not opened properly, expected [ {OPEN_SECTION} ] read [ {last_char_open_check} ]")
     in_section = True
-    # print("in section")
     section_buffer : list[str] = []
     lines_read = 1
 
@@ -525,10 +532,8 @@ def load_section(section:list[str]) -> tuple[list[str],int]: #section lines, las
     while in_section:
         line = section[lines_read]
         if first_iteration:
-            # print("line: ",line)
             first_iteration = False
             line = line[0:]
-            # print("0: ",line)
             if not line:
                 #empty
                 continue
@@ -536,7 +541,6 @@ def load_section(section:list[str]) -> tuple[list[str],int]: #section lines, las
         last_char_closed_check = line[-1] # last char
         if last_char_closed_check == CLOSE_SECTION: # found end
             in_section = False
-            # print("exited section")
             continue
         section_buffer.append(line)
 
@@ -558,10 +562,8 @@ def parse_initial(source:str) -> tuple[list[str],list[str]]:
     if section2_name != "program" and section2_name != "data":
         handle_error("Format",f"invalid section name [ {section2_name} ]")
 
-    # print("program source : ",second_source)
     sections[section2_name],_ = load_section(second_source)
 
-    # print(f"data:\n\n{sections["data"]}\n\nprogram:\n\n{sections["program"]}\n")
     return sections["data"],sections["program"]
 
 def main():
@@ -569,8 +571,9 @@ def main():
         handle_error("Argument","missing input file... aborting")
 
     if len(sys.argv) < 3:
-        print(f"{YELLOW} Assembly Argument Warning ::{RESET} output file not specified, defaulting to nisvc.out")
-        out_file : str = "nisvc.out"
+
+        handle_warning("Argument",f"output file not specified, defaulting to {DEFAULT_BINARY_NAME}")
+        out_file : str = DEFAULT_BINARY_NAME
     else:
         out_file : str =  sys.argv[2]
 
@@ -589,14 +592,3 @@ def main():
     asm_data,asm_program = assemble(data,program)
     nisvc_ef_build(out_file,asm_data,asm_program)
 main()
-
-# special_ptrs : dict[str,int] = {
-#     ASSEMBLY_POINTER:0,
-# }
-
-# labels = {"!label":16,"!louis":12,"!spoink":1234}
-# labels.update(special_ptrs)
-
-# result = evaluate_literal_definition(sys.argv[1],labels)
-# print(result)
-# # eval_expression((1,"+",2))

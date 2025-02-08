@@ -241,13 +241,18 @@ impl Runtime {
     /// step through one cycle
     pub fn step(&mut self) -> Result<(), String> {
         let opcode = self.decode_opcode()?;
-        println!("{opcode:?}");
+        if constant::DEBUG_PRINT {
+            println!("{opcode:?}");
+        }
         let operation_result = match opcode {
             Opcode::Nop => self.nop(),
+
             Opcode::Mov => self.op_mov(),
             Opcode::Movim => self.op_movim(),
+
             Opcode::Load => self.op_load(),
             Opcode::Store => self.op_store(),
+
             Opcode::Add => self.op_add(),
             Opcode::Sub => self.op_sub(),
             Opcode::Mult => self.op_mult(),
@@ -268,6 +273,15 @@ impl Runtime {
             Opcode::Jifz => self.op_jifz(),
             Opcode::Jifnz => self.op_jifnz(),
             Opcode::Pr => self.op_pr(),
+
+            Opcode::Inc => self.op_inc(),
+            Opcode::Dec => self.op_dec(),
+
+            Opcode::Push => self.op_push(),
+            Opcode::Pop => self.op_pop(),
+
+            Opcode::Call => self.op_call(),
+            Opcode::Ret => self.op_ret(),
         };
         match operation_result {
             Ok(increment) => self.spr.pc += increment as u64,
@@ -370,11 +384,12 @@ impl Runtime {
         }) as usize;
         head += 8;
         // data image and program image length u64s read successfully
-        println!("data_length/initram_size = {}", data_rom_length);
-        println!("program_length = {}", program_length);
-        println!("rom_base = {:#x?}", self.memory.program_base);
-        println!("ram_base = {:#x?}", self.memory.ram_base);
-
+        if constant::DEBUG_PRINT {
+            println!("data_length/initram_size = {}", data_rom_length);
+            println!("program_length = {}", program_length);
+            println!("rom_base = {:#x?}", self.memory.program_base);
+            println!("ram_base = {:#x?}", self.memory.ram_base);
+        }
         // self.memory.program = binary_image[head + data_rom_length as usize
         //     ..head + data_rom_length as usize + program_length as usize]
         //     .to_vec();
@@ -382,9 +397,12 @@ impl Runtime {
         // // program and ram now loaded
 
         self.memory.program = binary_image[head..head + program_length].to_vec();
-        self.memory.ram =
-            binary_image[head + program_length..head + program_length + data_rom_length].to_vec();
+        // self.memory.ram =
+        //     binary_image[head + program_length..head + program_length + data_rom_length].to_vec();
+        let ram_image =
+            &binary_image[head + program_length..head + program_length + data_rom_length];
         self.memory.ram_base = (constant::MMIO_ADDRESS_SPACE + program_length) as u64; // program/ram address boundary
+        self.memory.flash_ram(ram_image)?;
         self.spr.pc = self.memory.program_base;
         self.state = State::ProgramLoadedNotStarted;
         Ok(())
@@ -557,21 +575,48 @@ impl Runtime {
         Ok(bytes_read)
     }
     fn op_store(&mut self) -> Result<usize, String> {
-        let bytes_read = constant::ADDRESS_BYTES + constant::REGISTER_BYTES * 2;
+        let bytes_read =
+            constant::OPCODE_BYTES + constant::ADDRESS_BYTES + constant::REGISTER_BYTES * 2;
         // addr,reg,reg
         let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
-        let size = self.get_reg(
-            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
-                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2] // 2+2..2+2+2 4..6
+        // let size = self.get_reg(
+        //     operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES
+        //         ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2] // 2+2..2+2+2 4..6
+        //         .to_vec(),
+        // )?;
+        // let address = Memory::address_from_bytes(
+        //     operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
+        //         ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES]
+        //         .to_vec(),
+        // )?; // 2+(2*2).. 6..14
+        // let src =
+        //     self.get_reg(operand_bytes[constant::OPCODE_BYTES..constant::REGISTER_BYTES].to_vec())?; // 0..2
+        // let src_bytes = &u64::to_le_bytes(src)[0..size as usize]; // need to then trunicate src_bytes by size
+
+        let address = Memory::address_from_bytes(
+            operand_bytes[constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::ADDRESS_BYTES]
                 .to_vec(),
         )?;
-        let address = Memory::address_from_bytes(
-            operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
-                ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2 + constant::ADDRESS_BYTES]
+        let size = self.get_reg(
+            operand_bytes[constant::OPCODE_BYTES + constant::ADDRESS_BYTES
+                ..constant::OPCODE_BYTES + constant::ADDRESS_BYTES + constant::REGISTER_BYTES]
                 .to_vec(),
-        )?; // 2+(2*2).. 6..14
-        let src =
-            self.get_reg(operand_bytes[constant::OPCODE_BYTES..constant::REGISTER_BYTES].to_vec())?; // 0..2
+        )?;
+        let src = self.get_reg(
+            operand_bytes[constant::OPCODE_BYTES
+                + constant::ADDRESS_BYTES
+                + constant::REGISTER_BYTES
+                ..constant::OPCODE_BYTES
+                    + constant::ADDRESS_BYTES
+                    + constant::REGISTER_BYTES
+                    + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        if size > 8 {
+            return Err(format!(
+                "store panic :: {size} bytes cannot fit into an 8 byte register"
+            ));
+        }
         let src_bytes = &u64::to_le_bytes(src)[0..size as usize]; // need to then trunicate src_bytes by size
         self.memory.write_bytes(address, src_bytes)?;
         Ok(bytes_read)
@@ -715,10 +760,14 @@ impl Runtime {
         let return_value;
         if condition == 0 {
             self.spr.pc = address;
-            println!("jifz condition is zero, jumping to {address}");
+            if constant::DEBUG_PRINT {
+                println!("jifz condition is zero, jumping to {address}");
+            }
             return_value = 0;
         } else {
-            println!("jifz condition not zero no action taken");
+            if constant::DEBUG_PRINT {
+                println!("jifz condition not zero no action taken");
+            }
             return_value = bytes_read;
         }
         Ok(return_value) // return zero if no action taken
@@ -741,10 +790,14 @@ impl Runtime {
         let return_value;
         if condition != 0 {
             self.spr.pc = address;
-            println!("jifnz condition is not zero, jumping to {address:#x}");
+            if constant::DEBUG_PRINT {
+                println!("jifnz condition is not zero, jumping to {address:#x}");
+            }
             return_value = 0;
         } else {
-            println!("jifnz condition is zero no action taken");
+            if constant::DEBUG_PRINT {
+                println!("jifnz condition is zero no action taken");
+            }
             return_value = bytes_read;
         }
         Ok(return_value) // return zero if no action taken
@@ -762,8 +815,78 @@ impl Runtime {
         Ok(bytes_read)
     }
     fn op_end_of_exec_section(&mut self) -> Result<usize, String> {
-        println!("end_of_exec_section");
+        if constant::DEBUG_PRINT {
+            println!("end_of_exec_section");
+        }
         self.state = State::ProgramExitedSuccess;
         Ok(0)
+    }
+
+    fn op_inc(&mut self) -> Result<usize, String> {
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let register = self.get_mut_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        *register += 1;
+        Ok(bytes_read)
+    }
+    fn op_dec(&mut self) -> Result<usize, String> {
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let register = self.get_mut_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        *register -= 1;
+        Ok(bytes_read)
+    }
+    fn op_push(&mut self) -> Result<usize, String> {
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let register = self.get_mut_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        todo!();
+        Ok(bytes_read)
+    }
+    fn op_pop(&mut self) -> Result<usize, String> {
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let register = self.get_mut_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        todo!();
+        Ok(bytes_read)
+    }
+    fn op_call(&mut self) -> Result<usize, String> {
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let register = self.get_mut_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        todo!();
+        Ok(bytes_read)
+    }
+    fn op_ret(&mut self) -> Result<usize, String> {
+        let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES;
+        let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
+        let register = self.get_mut_reg(
+            operand_bytes
+                [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
+                .to_vec(),
+        )?;
+        todo!();
+
+        Ok(bytes_read)
     }
 }
