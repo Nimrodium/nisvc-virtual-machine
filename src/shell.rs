@@ -19,7 +19,7 @@ impl Shell {
     /// constructor
     pub fn new() -> Result<Self, String> {
         let debug = true;
-        let mut runtime = Runtime::new(debug);
+        let runtime = Runtime::new(debug);
 
         println!(
             ":: NIMCODE RUNTIME SHELL VERSION {} ::",

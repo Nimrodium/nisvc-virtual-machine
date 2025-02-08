@@ -22,6 +22,8 @@ A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose regist
   ## runtime memory map:
     [MMIO][PROGRAM][DATA]
 # Shell Commands
+  - `ls <dir>`
+  	> lists contents of dir. defaults to . if no dir is specified
   - `load <binary file path>`
     > loads the binary file into the virtual machine
   - `exec`
@@ -34,6 +36,7 @@ A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose regist
     > resets program to be executed again
   - `exit`
     > exits shell
+   
 # instruction Set
   - mov
   - movim
