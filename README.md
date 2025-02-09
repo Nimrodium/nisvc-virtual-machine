@@ -57,6 +57,7 @@ A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose regist
   - neg
   - jmp
   - jifnz
+  - jifz
   - pr
   - inc
   - dec

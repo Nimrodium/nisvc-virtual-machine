@@ -19,6 +19,6 @@ pub const DISPLAY_MMIO_ADDRESS_START: u64 = 0x1; // inclusive
 pub const DISPLAY_MMIO_ADDRESS_END: u64 = 0x29; // inclusive
 
 pub const CLOCK_SPEED_MS: u64 = 0; //milliseconds between clock cycle
-pub const DEBUG_PRINT: bool = false;
+pub const DEBUG_PRINT: bool = true;
 
 pub const INIT_RAM_VALUE: u8 = 0xFF;

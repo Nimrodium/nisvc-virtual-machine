@@ -283,10 +283,6 @@ impl Runtime {
         }
         Ok(())
     }
-
-    pub fn throw_runtime_error(self, why: &str) {
-        println!("runtime error!! :: {}", why)
-    }
     pub fn load(&mut self, binary: &Path) -> Result<(), String> {
         // verify signature
         // locate start and end of exec
@@ -357,7 +353,7 @@ impl Runtime {
         let program_length = u64::from_le_bytes(match &binary_image[head..head + 8].try_into() {
             Ok(array) => *array,
             Err(why) => {
-                let error = format!("failed to read datarom length :: {}", why);
+                let error = format!("failed to read program length :: {}", why);
                 return Err(error);
             }
         }) as usize;
@@ -368,33 +364,29 @@ impl Runtime {
         let data_rom_length = u64::from_le_bytes(match &binary_image[head..head + 8].try_into() {
             Ok(array) => *array,
             Err(why) => {
-                let error = format!("failed to read execrom length :: {}", why);
+                let error = format!("failed to read ram_image length :: {}", why);
                 return Err(error);
             }
         }) as usize;
         head += 8;
         // data image and program image length u64s read successfully
-        if constant::DEBUG_PRINT {
-            println!("data_length/initram_size = {}", data_rom_length);
-            println!("program_length = {}", program_length);
-            println!("rom_base = {:#x?}", self.memory.program_base);
-            println!("ram_base = {:#x?}", self.memory.ram_base);
-        }
-        // self.memory.program = binary_image[head + data_rom_length as usize
-        //     ..head + data_rom_length as usize + program_length as usize]
-        //     .to_vec();
-        // self.memory.ram = binary_image[head..head + data_rom_length as usize].to_vec();
-        // // program and ram now loaded
 
         self.memory.program = binary_image[head..head + program_length].to_vec();
-        // self.memory.ram =
-        //     binary_image[head + program_length..head + program_length + data_rom_length].to_vec();
+
         let ram_image =
             &binary_image[head + program_length..head + program_length + data_rom_length];
         self.memory.ram_base = (constant::MMIO_ADDRESS_SPACE + program_length) as u64; // program/ram address boundary
         self.memory.flash_ram(ram_image)?;
         self.spr.pc = self.memory.program_base;
         self.state = State::ProgramLoadedNotStarted;
+        if constant::DEBUG_PRINT {
+            println!("MMIO size = {}", constant::MMIO_ADDRESS_SPACE);
+            println!("data_length/initram_size = {}", data_rom_length);
+            println!("program_length = {}", program_length);
+            println!("program_real_length = {}", self.memory.program.len());
+            println!("rom_base = {:#x?}", self.memory.program_base);
+            println!("ram_base = {:#x?}", self.memory.ram_base);
+        }
         Ok(())
     }
 
@@ -529,6 +521,8 @@ impl Runtime {
             .to_vec();
         let dest_reg = self.get_mut_reg(dest_bytes)?;
         *dest_reg = immediate_u64;
+
+        println!("movim instruction:\n\tdest_regid: {dest_reg}\n\tsize: {size}\n\timmediate: {immediate_u64}");
         Ok(bytes_read + size)
     }
     /// `load r1,r2,buffer`

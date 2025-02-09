@@ -30,7 +30,7 @@ impl Memory {
             ram: Memory::init_ram(1000),
             mmio_base: 0, // always zero unless i put something under mmio
             program_base: constant::MMIO_ADDRESS_SPACE as u64, // change this when i actually add an mmio system
-            ram_base: 0,                                       // start of ram aka rom.len()-1
+            ram_base: constant::MMIO_ADDRESS_SPACE as u64,     // start of ram aka rom.len()-1
         }
     }
     /// return a slice of bytes starting address and extending for bytes
@@ -67,14 +67,23 @@ impl Memory {
     pub fn mmu_read(&self, address: u64) -> Result<u8, String> {
         if address < self.program_base {
             // mmio address
+            if constant::DEBUG_PRINT {
+                println!("mmu_read decode {address} -> mmio::{address}")
+            }
             self.mmio_read_handler(address)
         } else if address < self.ram_base {
             // rom address
             let physical_address = address - self.program_base;
+            if constant::DEBUG_PRINT {
+                print!("mmu_read decode {address} -> rom::{physical_address}")
+            }
             self.read(physical_address, true)
         } else {
             // ram address
             let physical_address = address - self.ram_base;
+            if constant::DEBUG_PRINT {
+                print!("mmu_read decode {address} -> ram::{physical_address}")
+            }
             self.read(physical_address, false)
         }
     }
@@ -82,6 +91,8 @@ impl Memory {
     pub fn mmu_write(&mut self, address: u64, byte: u8) -> Result<(), String> {
         if address < self.program_base {
             // mmio address
+            print!("mmu_write decode {address} -> mmio::{address}");
+
             self.mmio_write_handler(address, byte)
         } else if address < self.ram_base {
             // rom address
@@ -89,6 +100,8 @@ impl Memory {
         } else {
             // ram address
             let physical_address = address - self.ram_base;
+            print!("mmu_write decode {address} -> ram::{physical_address}");
+
             self.write(physical_address, byte)
         }
     }
@@ -102,6 +115,9 @@ impl Memory {
             );
         }
         self.ram.fill(constant::INIT_RAM_VALUE);
+        if constant::DEBUG_PRINT {
+            println!("first ram address {}", self.ram[0]);
+        }
         self.write_bytes(self.ram_base, ram_image)
     }
 
@@ -114,19 +130,26 @@ impl Memory {
                 "MemoryAccessViolation :: attempted read operation on invalid ram address {physical_address:#x?}"
             )),
         }?;
+        if constant::DEBUG_PRINT {
+            println!("-> [ {byte} ]");
+        }
         Ok(*byte)
     }
 
     fn write(&mut self, physical_address: u64, byte: u8) -> Result<(), String> {
         let byte_reference = self.ram.get_mut(physical_address as usize).ok_or(format!("MemoryAccessViolation :: attempted write operation on invalid ram address {physical_address:#x?}"))?;
+        if constant::DEBUG_PRINT {
+            println!(" -> old::[ {} ] new::[ {byte} ]", *byte_reference);
+        }
         *byte_reference = byte;
+
         Ok(())
     }
 
     fn mmio_read_handler(&self, address: u64) -> Result<u8, String> {
-        todo!()
+        Err(format!("mmio not implemented"))
     }
     fn mmio_write_handler(&mut self, address: u64, byte: u8) -> Result<(), String> {
-        todo!()
+        Err(format!("mmio not implemented"))
     }
 }

@@ -76,6 +76,8 @@ impl Shell {
             "pr-reg" => self.cmd_print_register(cmd),
             "dump" => self.cmd_dump(cmd),
             "ls" => self.cmd_ls(cmd),
+            "memread" => self.cmd_memread(cmd),
+            "ramread" => self.cmd_ramread(cmd),
             "" => Ok(()),
             _ => Err(format!("unrecognized command [{}]", command_word)),
         }
@@ -146,10 +148,7 @@ impl Shell {
             _ => return Err("invalid register".to_string()),
         };
         // println!("unsigned:\n\tdecimal: {register_value}\n\thex: {register_value:#x}\nsigned:\n\tdecimal: {}\n\thex {:#x}",register_value as isize,register_value as isize);
-        println!(
-            "signed_dec: {}\nunsigned_dec: {register_value}\nhex: {register_value:#x}",
-            register_value as isize
-        );
+        println!("{}", print_value(register_value as usize));
         Ok(())
     }
     fn cmd_ls(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
@@ -183,4 +182,32 @@ impl Shell {
             _ => Ok(println!("invalid memory section")),
         }
     }
+    fn cmd_memread(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+        let address: u64 = match cmd.next().ok_or("missing address")?.trim().parse() {
+            Ok(addr) => addr,
+            Err(why) => return Err(format!("could not read address {why}")),
+        };
+        let value = self.runtime.memory.mmu_read(address)?;
+        println!("byte at {address}:\n{}", print_value(value as usize));
+        Ok(())
+    }
+    fn cmd_ramread(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+        let address: u64 = match cmd.next().ok_or("missing address")?.trim().parse() {
+            Ok(addr) => addr,
+            Err(why) => return Err(format!("could not read address {why}")),
+        };
+        let value = self
+            .runtime
+            .memory
+            .mmu_read(address + self.runtime.memory.ram_base)?;
+        println!("byte at (ram) {address}:\n{}", print_value(value as usize));
+        Ok(())
+    }
+}
+
+fn print_value(value: usize) -> String {
+    format!(
+        "signed_dec: {}\nunsigned_dec: {value}\nhex: {value:#x}",
+        value as isize
+    )
 }
