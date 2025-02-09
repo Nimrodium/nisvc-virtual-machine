@@ -9,6 +9,11 @@ import os
 import enum
 import sys
 from typing_extensions import NoReturn
+
+
+
+REGISTER_WIDTH = 64//8
+
 U8_MAX = 255
 U16_MAX = 65_535
 U32_MAX = 4_294_967_295
@@ -16,7 +21,7 @@ U64_MAX = 18_446_744_073_709_551_615
 
 REGISTER_BYTES = 1
 OPCODE_BYTES = 1
-ADDRESS_BYTES = 8
+ADDRESS_BYTES = REGISTER_WIDTH
 MMIO_ADDRESS_SPACE = 42
 SIGNATURE = b"NISVC-EF"
 DEFAULT_BINARY_NAME = "nisvc.out"
@@ -200,19 +205,23 @@ def evaluate_literal_definition(expr:str,labels:dict[str,int]) -> int:
     return result
 
 def immediate_byte_size(value:int) -> int:
+    size = 0
     if value > U64_MAX: # cannot be fit
-        raise ValueError(f"immediate {value} over u64 limit {U64_MAX}")
+        size = 8
     if value < 0:
         raise ValueError(f"immediate {value} is negative which is not supported in the current nimcode implementation")
     if value > U32_MAX:
-        return 8
+        size = 8
     elif value > U16_MAX:
-        return 4
+        size = 4
     elif value > U8_MAX:
-        return 2
+        size = 2
     else:
-        return 1
-
+        size = 1
+    if size > REGISTER_WIDTH:
+        raise ValueError(f"immediate is too large for the target architecture :: target only supports {REGISTER_WIDTH} byte values")
+    else:
+        return size
 def clean_source(source:str) -> list[str]:
     source_lines = source.strip().splitlines()
     cleaned_source : list[str] = []
@@ -469,15 +478,23 @@ def expand_bytes(intermediate_program:list[list[tuple[int,Tp,int]]]) -> bytes:
     resolved_program_bytes.extend(end_of_exec)
     return bytes(resolved_program_bytes)
 
+def check_size(target_name:str, size:int):
+    try:
+        immediate_byte_size(size)
+    except ValueError as e:
+        handle_error("Target Constraint", f"{target_name} too large for target address space :: {e}")
 
 # package data and program into nisvc-ef executable binary image
 def nisvc_ef_build(name:str,data:bytes,program:bytes):
     with open(name, "wb") as f:
-        # Write signature
         f.write(SIGNATURE)
 
-        f.write((len(program)).to_bytes(8, byteorder='little'))
-        f.write((len(data)).to_bytes(8, byteorder='little'))
+        check_size("program", len(program))
+        check_size("data", len(data))
+        check_size("binary image", len(program) + len(data) + MMIO_ADDRESS_SPACE)
+
+        f.write((len(program)).to_bytes(REGISTER_WIDTH, byteorder='little'))
+        f.write((len(data)).to_bytes(REGISTER_WIDTH, byteorder='little'))
 
         f.write(program)
         f.write(data)

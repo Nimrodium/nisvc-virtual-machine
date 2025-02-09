@@ -24,6 +24,8 @@ A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose regist
 # Shell Commands
   - `ls <dir>`
   	> lists contents of dir. defaults to . if no dir is specified
+  - `info`
+    > prints revision and architecture version
   - `load <binary file path>`
     > loads the binary file into the virtual machine
   - `exec`
@@ -36,6 +38,7 @@ A 64-bit RISC CPU with Harvard architecture, featuring 20 general purpose regist
     > resets program to be executed again
   - `exit`
     > exits shell
+
 
 # instruction Set
   - mov

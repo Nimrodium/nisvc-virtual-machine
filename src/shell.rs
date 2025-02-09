@@ -1,5 +1,5 @@
 use crate::{
-    constant,
+    constant::{self, RegisterWidth},
     cpu::{GeneralPurposeRegisters, Runtime, SpecialPurposeRegisters, State},
 };
 use rustyline::{error::ReadlineError, history::FileHistory, DefaultEditor, Editor};
@@ -78,6 +78,7 @@ impl Shell {
             "ls" => self.cmd_ls(cmd),
             "memread" => self.cmd_memread(cmd),
             "ramread" => self.cmd_ramread(cmd),
+            "ver" | "version" | "info" => self.cmd_info(cmd),
             "" => Ok(()),
             _ => Err(format!("unrecognized command [{}]", command_word)),
         }
@@ -183,7 +184,7 @@ impl Shell {
         }
     }
     fn cmd_memread(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        let address: u64 = match cmd.next().ok_or("missing address")?.trim().parse() {
+        let address: RegisterWidth = match cmd.next().ok_or("missing address")?.trim().parse() {
             Ok(addr) => addr,
             Err(why) => return Err(format!("could not read address {why}")),
         };
@@ -192,7 +193,7 @@ impl Shell {
         Ok(())
     }
     fn cmd_ramread(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        let address: u64 = match cmd.next().ok_or("missing address")?.trim().parse() {
+        let address: RegisterWidth = match cmd.next().ok_or("missing address")?.trim().parse() {
             Ok(addr) => addr,
             Err(why) => return Err(format!("could not read address {why}")),
         };
@@ -201,6 +202,15 @@ impl Shell {
             .memory
             .mmu_read(address + self.runtime.memory.ram_base)?;
         println!("byte at (ram) {address}:\n{}", print_value(value as usize));
+        Ok(())
+    }
+    fn cmd_info(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+        println!(
+            "Architecture: NISVC-{}\nRevision: {}\nAllocated RAM: {}KB",
+            size_of::<RegisterWidth>() * 8,
+            constant::RUNTIME_VER,
+            constant::RAM_SIZE as f32 / 1000 as f32
+        );
         Ok(())
     }
 }

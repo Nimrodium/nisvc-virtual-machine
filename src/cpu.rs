@@ -4,91 +4,91 @@
 use std::{fs::File, io::Read, path::Path};
 
 use crate::{
-    constant::{self, OpcodeSize},
+    constant::{self, OpcodeSize, RegisterWidth, INIT_VALUE},
     memory::Memory,
     opcode::Opcode,
 };
 
 pub struct GeneralPurposeRegisters {
-    pub r1: u64,
-    pub r2: u64,
-    pub r3: u64,
-    pub r4: u64,
-    pub r5: u64,
-    pub r6: u64,
-    pub r7: u64,
-    pub r8: u64,
-    pub r9: u64,
-    pub r10: u64,
-    pub r11: u64,
-    pub r12: u64,
-    pub r13: u64,
-    pub r14: u64,
-    pub r15: u64,
-    pub r16: u64,
-    pub r17: u64,
-    pub r18: u64,
-    pub r19: u64,
-    pub r20: u64,
+    pub r1: RegisterWidth,
+    pub r2: RegisterWidth,
+    pub r3: RegisterWidth,
+    pub r4: RegisterWidth,
+    pub r5: RegisterWidth,
+    pub r6: RegisterWidth,
+    pub r7: RegisterWidth,
+    pub r8: RegisterWidth,
+    pub r9: RegisterWidth,
+    pub r10: RegisterWidth,
+    pub r11: RegisterWidth,
+    pub r12: RegisterWidth,
+    pub r13: RegisterWidth,
+    pub r14: RegisterWidth,
+    pub r15: RegisterWidth,
+    pub r16: RegisterWidth,
+    pub r17: RegisterWidth,
+    pub r18: RegisterWidth,
+    pub r19: RegisterWidth,
+    pub r20: RegisterWidth,
 }
 
 pub struct SpecialPurposeRegisters {
-    pub pc: u64,
-    pub sp: u64,
+    pub pc: RegisterWidth,
+    pub sp: RegisterWidth,
 
-    pub o1: u64,
-    pub o2: u64,
-    pub o3: u64,
-    pub o4: u64,
-    pub o5: u64,
-    pub o6: u64,
-    pub o7: u64,
-    pub o8: u64,
-    pub o9: u64,
-    pub o10: u64,
+    pub o1: RegisterWidth,
+    pub o2: RegisterWidth,
+    pub o3: RegisterWidth,
+    pub o4: RegisterWidth,
+    pub o5: RegisterWidth,
+    pub o6: RegisterWidth,
+    pub o7: RegisterWidth,
+    pub o8: RegisterWidth,
+    pub o9: RegisterWidth,
+    pub o10: RegisterWidth,
 }
 
 impl GeneralPurposeRegisters {
     pub fn new() -> Self {
         GeneralPurposeRegisters {
-            r1: 0xDEADBEEF,
-            r2: 0xDEADBEEF,
-            r3: 0xDEADBEEF,
-            r4: 0xDEADBEEF,
-            r5: 0xDEADBEEF,
-            r6: 0xDEADBEEF,
-            r7: 0xDEADBEEF,
-            r8: 0xDEADBEEF,
-            r9: 0xDEADBEEF,
-            r10: 0xDEADBEEF,
-            r11: 0xDEADBEEF,
-            r12: 0xDEADBEEF,
-            r13: 0xDEADBEEF,
-            r14: 0xDEADBEEF,
-            r15: 0xDEADBEEF,
-            r16: 0xDEADBEEF,
-            r17: 0xDEADBEEF,
-            r18: 0xDEADBEEF,
-            r19: 0xDEADBEEF,
-            r20: 0xDEADBEEF,
+            r1: INIT_VALUE,
+            r2: INIT_VALUE,
+            r3: INIT_VALUE,
+            r4: INIT_VALUE,
+            r5: INIT_VALUE,
+            r6: INIT_VALUE,
+            r7: INIT_VALUE,
+            r8: INIT_VALUE,
+            r9: INIT_VALUE,
+            r10: INIT_VALUE,
+            r11: INIT_VALUE,
+            r12: INIT_VALUE,
+            r13: INIT_VALUE,
+            r14: INIT_VALUE,
+            r15: INIT_VALUE,
+            r16: INIT_VALUE,
+            r17: INIT_VALUE,
+            r18: INIT_VALUE,
+            r19: INIT_VALUE,
+            r20: INIT_VALUE,
         }
     }
 }
 impl SpecialPurposeRegisters {
     pub fn new() -> Self {
         SpecialPurposeRegisters {
-            pc: 0xDEADBEEF,
-            sp: 0xDEADBEEF,
-            o1: 0xDEADBEEF,
-            o2: 0xDEADBEEF,
-            o3: 0xDEADBEEF,
-            o4: 0xDEADBEEF,
-            o5: 0xDEADBEEF,
-            o6: 0xDEADBEEF,
-            o7: 0xDEADBEEF,
-            o8: 0xDEADBEEF,
-            o9: 0xDEADBEEF,
-            o10: 0xDEADBEEF,
+            pc: INIT_VALUE,
+            sp: INIT_VALUE,
+            o1: INIT_VALUE,
+            o2: INIT_VALUE,
+            o3: INIT_VALUE,
+            o4: INIT_VALUE,
+            o5: INIT_VALUE,
+            o6: INIT_VALUE,
+            o7: INIT_VALUE,
+            o8: INIT_VALUE,
+            o9: INIT_VALUE,
+            o10: INIT_VALUE,
         }
     }
 }
@@ -119,9 +119,9 @@ impl Runtime {
         }
     }
     /// returns mutable reference to a register
-    fn get_mut_reg(&mut self, reg_bytes: Vec<u8>) -> Result<&mut u64, String> {
+    fn get_mut_reg(&mut self, reg_bytes: Vec<u8>) -> Result<&mut RegisterWidth, String> {
         let mut bytes = reg_bytes.clone();
-        let reg = bytes_to_u64(&mut bytes)?;
+        let reg = bytes_to_register_width(&mut bytes)?;
         // println!("reg_code: {reg}");
         match reg {
             1 => Ok(&mut self.gpr.r1),
@@ -160,9 +160,9 @@ impl Runtime {
         }
     }
     /// returns the value inside register
-    fn get_reg(&self, reg_bytes: Vec<u8>) -> Result<u64, String> {
+    fn get_reg(&self, reg_bytes: Vec<u8>) -> Result<RegisterWidth, String> {
         let mut bytes = reg_bytes.clone();
-        let reg = bytes_to_u64(&mut bytes)?;
+        let reg = bytes_to_register_width(&mut bytes)?;
         // println!("reg_code: {reg}");
         match reg {
             1 => Ok(self.gpr.r1),
@@ -278,7 +278,7 @@ impl Runtime {
             Opcode::Ret => self.op_ret(),
         };
         match operation_result {
-            Ok(increment) => self.spr.pc += increment as u64,
+            Ok(increment) => self.spr.pc += increment as RegisterWidth,
             Err(runtime_error) => return Err(format!("runtime error :: {}", runtime_error)),
         }
         Ok(())
@@ -332,7 +332,7 @@ impl Runtime {
                 return Err(error);
             }
         };
-        let header_len = 8 * 2;
+        let header_len = size_of::<RegisterWidth>() * 2;
         if binary_image.len() < header_len {
             return Err(format!(
                 "{} formatted file has incomplete header {} bytes, expected {} bytes ",
@@ -350,32 +350,36 @@ impl Runtime {
         // read data length
         // first u64 after the signature is size of data section in bytes
 
-        let program_length = u64::from_le_bytes(match &binary_image[head..head + 8].try_into() {
-            Ok(array) => *array,
-            Err(why) => {
-                let error = format!("failed to read program length :: {}", why);
-                return Err(error);
-            }
-        }) as usize;
-        head += 8; // pass the datarom length
-                   // read exec length
-                   // next 8 bytes after datarom length
+        let program_length = RegisterWidth::from_le_bytes(
+            match &binary_image[head..head + size_of::<RegisterWidth>()].try_into() {
+                Ok(array) => *array,
+                Err(why) => {
+                    let error = format!("failed to read program length :: {}", why);
+                    return Err(error);
+                }
+            },
+        ) as usize;
+        head += size_of::<RegisterWidth>(); // pass the datarom length
+                                            // read exec length
+                                            // next 8 bytes after datarom length
 
-        let data_rom_length = u64::from_le_bytes(match &binary_image[head..head + 8].try_into() {
-            Ok(array) => *array,
-            Err(why) => {
-                let error = format!("failed to read ram_image length :: {}", why);
-                return Err(error);
-            }
-        }) as usize;
-        head += 8;
+        let data_rom_length = RegisterWidth::from_le_bytes(
+            match &binary_image[head..head + size_of::<RegisterWidth>()].try_into() {
+                Ok(array) => *array,
+                Err(why) => {
+                    let error = format!("failed to read ram_image length :: {}", why);
+                    return Err(error);
+                }
+            },
+        ) as usize;
+        head += size_of::<RegisterWidth>();
         // data image and program image length u64s read successfully
 
         self.memory.program = binary_image[head..head + program_length].to_vec();
 
         let ram_image =
             &binary_image[head + program_length..head + program_length + data_rom_length];
-        self.memory.ram_base = (constant::MMIO_ADDRESS_SPACE + program_length) as u64; // program/ram address boundary
+        self.memory.ram_base = (constant::MMIO_ADDRESS_SPACE + program_length) as RegisterWidth; // program/ram address boundary
         self.memory.flash_ram(ram_image)?;
         self.spr.pc = self.memory.program_base;
         self.state = State::ProgramLoadedNotStarted;
@@ -409,7 +413,9 @@ impl Runtime {
             Err(()) => return Err(format!("opcode {:#x?} not recognized", opcode_code)),
         }
     }
-    fn trinary_operand_decode(&mut self) -> Result<(&mut u64, u64, u64, usize), String> {
+    fn trinary_operand_decode(
+        &mut self,
+    ) -> Result<(&mut RegisterWidth, RegisterWidth, RegisterWidth, usize), String> {
         let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3;
         let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
         let src1 = self.get_reg(
@@ -432,14 +438,16 @@ impl Runtime {
     fn extract_first_operand_as_register_mut(
         &mut self,
         bytes: &Vec<u8>,
-    ) -> Result<&mut u64, String> {
+    ) -> Result<&mut RegisterWidth, String> {
         let first_register = self.get_mut_reg(
             bytes[constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
                 .to_vec(),
         )?;
         Ok(first_register)
     }
-    fn binary_operand_decode(&mut self) -> Result<(&mut u64, u64, usize), String> {
+    fn binary_operand_decode(
+        &mut self,
+    ) -> Result<(&mut RegisterWidth, RegisterWidth, usize), String> {
         let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2;
         let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
         let src = self.get_reg(
@@ -451,21 +459,25 @@ impl Runtime {
         Ok((dest, src, bytes_read))
     }
 }
-// converts a vector of bytes into a u64 and pads if theres not enough errors if too many bytes are passed
-fn bytes_to_u64(bytes: &mut Vec<u8>) -> Result<u64, String> {
-    if bytes.len() > 8 {
-        return Err(format!("too many bytes to pack into a 64bit integer",));
+/// converts a vector of bytes into a u64 and pads if theres not enough errors if too many bytes are passed
+fn bytes_to_register_width(bytes: &mut Vec<u8>) -> Result<RegisterWidth, String> {
+    if bytes.len() > size_of::<RegisterWidth>() {
+        return Err(format!(
+            "too many bytes to pack into a {} byte integer",
+            size_of::<RegisterWidth>()
+        ));
     }
-    bytes.resize(8, 0x0);
-    let bytes_array: [u8; 8] = match bytes.as_slice().try_into() {
+    bytes.resize(size_of::<RegisterWidth>(), 0x0);
+    let bytes_array: [u8; size_of::<RegisterWidth>()] = match bytes.as_slice().try_into() {
         Ok(arr) => arr,
         Err(why) => {
             return Err(format!(
-                "error building 64bit integer from bytes :: {why:?}"
+                "error building {} byte integer from bytes :: {why:?}",
+                size_of::<RegisterWidth>()
             ))
         }
     };
-    Ok(u64::from_le_bytes(bytes_array))
+    Ok(RegisterWidth::from_le_bytes(bytes_array))
 }
 // return of all instructions are Ok(increment program counter),Err(instruction Error)
 impl Runtime {
@@ -503,26 +515,27 @@ impl Runtime {
         let size: usize = *operand_bytes
             .get(constant::OPCODE_BYTES + constant::REGISTER_BYTES)
             .ok_or("could not read immediate size")? as usize;
-        if size > 8 || size == 0 {
+        if size > size_of::<RegisterWidth>() || size == 0 {
             return Err(format!(
                 "immediate is too large to load into register :: {}",
                 size
             ));
         }
         let mut immediate = self.memory.read_bytes(
-            self.spr.pc + constant::OPCODE_BYTES as u64 + constant::REGISTER_BYTES as u64 + 1,
+            self.spr.pc
+                + constant::OPCODE_BYTES as RegisterWidth
+                + constant::REGISTER_BYTES as RegisterWidth
+                + 1,
             size,
         )?;
-        // println!("imm {immediate:?}");
-        let immediate_u64 = bytes_to_u64(&mut immediate)?;
-        // println!("imm_u64 {immediate_u64}");
+        let immediate_reg_width = bytes_to_register_width(&mut immediate)?;
         let dest_bytes = operand_bytes
             [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
             .to_vec();
         let dest_reg = self.get_mut_reg(dest_bytes)?;
-        *dest_reg = immediate_u64;
+        *dest_reg = immediate_reg_width;
 
-        println!("movim instruction:\n\tdest_regid: {dest_reg}\n\tsize: {size}\n\timmediate: {immediate_u64}");
+        println!("movim instruction:\n\tdest_regid: {dest_reg}\n\tsize: {size}\n\timmediate: {immediate_reg_width}");
         Ok(bytes_read + size)
     }
     /// `load r1,r2,buffer`
@@ -532,7 +545,7 @@ impl Runtime {
     fn op_load(&mut self) -> Result<usize, String> {
         let bytes_read = constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3; // + constant::ADDRESS_BYTES; // reg,reg,addr
         let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
-        let address: u64 = self.get_reg(
+        let address: RegisterWidth = self.get_reg(
             operand_bytes[constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2
                 ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 3]
                 .to_vec(), // 4..12
@@ -542,12 +555,13 @@ impl Runtime {
                 ..constant::OPCODE_BYTES + constant::REGISTER_BYTES * 2]
                 .to_vec(), // 2..4
         )? as usize;
-        if size > 8 {
+        if size > size_of::<RegisterWidth>() {
             return Err(format!(
-                "requested bytes are too large to read into register :: {size} bytes cannot fit into an 8 byte register"
+                "requested bytes are too large to read into register :: {size} bytes cannot fit into an {} byte register",size_of::<RegisterWidth>()
             ));
         }
-        let dereferenced_value = bytes_to_u64(&mut self.memory.read_bytes(address, size)?)?;
+        let dereferenced_value =
+            bytes_to_register_width(&mut self.memory.read_bytes(address, size)?)?;
         let dest_reg = self.get_mut_reg(
             operand_bytes
                 [constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::REGISTER_BYTES]
@@ -582,12 +596,12 @@ impl Runtime {
                     + constant::REGISTER_BYTES]
                 .to_vec(),
         )?;
-        if size > 8 {
+        if size as usize > size_of::<RegisterWidth>() {
             return Err(format!(
-                "store panic :: {size} bytes cannot fit into an 8 byte register"
+                "requested bytes are too large to read into register :: {size} bytes cannot fit into an {} byte register",size_of::<RegisterWidth>()
             ));
         }
-        let src_bytes = &u64::to_le_bytes(src)[0..size as usize]; // need to then trunicate src_bytes by size
+        let src_bytes = &RegisterWidth::to_le_bytes(src)[0..size as usize]; // need to then trunicate src_bytes by size
         self.memory.write_bytes(address, src_bytes)?;
         Ok(bytes_read)
     }
@@ -702,7 +716,7 @@ impl Runtime {
         let bytes_read = constant::OPCODE_BYTES + constant::ADDRESS_BYTES;
         let operand_bytes = self.memory.read_bytes(self.spr.pc, bytes_read)?;
 
-        let address: u64 = Memory::address_from_bytes(
+        let address: RegisterWidth = Memory::address_from_bytes(
             operand_bytes[constant::OPCODE_BYTES..constant::OPCODE_BYTES + constant::ADDRESS_BYTES]
                 .to_vec(), // 4..12
         )?;
