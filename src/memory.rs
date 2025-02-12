@@ -1,4 +1,7 @@
-use crate::constant::{self, RegisterWidth};
+use crate::{
+    constant::{self, RegisterWidth},
+    mmio,
+};
 
 // memory.rs
 // memory interaction
@@ -12,6 +15,7 @@ pub struct Memory {
     // pub rom_exec_base: u64,
     pub ram_base: RegisterWidth,
     pub stack: Vec<RegisterWidth>,
+    mmio: mmio::MMIO,
 }
 // [MMIO][PROGRAM][DATARAM]
 impl Memory {
@@ -25,15 +29,16 @@ impl Memory {
         ram
         // vec![]
     }
-    pub fn new() -> Self {
-        Memory {
+    pub fn new() -> Result<Self, String> {
+        Ok(Memory {
             program: vec![],
             ram: Memory::init_ram(constant::RAM_SIZE as usize),
             mmio_base: 0, // always zero unless i put something under mmio
             program_base: constant::MMIO_ADDRESS_SPACE as RegisterWidth, // change this when i actually add an mmio system
             ram_base: constant::MMIO_ADDRESS_SPACE as RegisterWidth,
             stack: vec![], // start of ram aka rom.len()-1
-        }
+            mmio: mmio::MMIO::new()?,
+        })
     }
 
     pub fn push(&mut self, value: RegisterWidth) -> Result<(), String> {
@@ -44,7 +49,7 @@ impl Memory {
     }
 
     /// return a slice of bytes starting address and extending for bytes
-    pub fn read_bytes(&self, address: RegisterWidth, bytes: usize) -> Result<Vec<u8>, String> {
+    pub fn read_bytes(&mut self, address: RegisterWidth, bytes: usize) -> Result<Vec<u8>, String> {
         let mut byte_buffer: Vec<u8> = Vec::with_capacity(bytes);
         for n in 0..bytes {
             let byte_address = address + n as RegisterWidth;
@@ -74,13 +79,14 @@ impl Memory {
     }
 
     /// returns byte at address
-    pub fn mmu_read(&self, address: RegisterWidth) -> Result<u8, String> {
+    pub fn mmu_read(&mut self, address: RegisterWidth) -> Result<u8, String> {
+        // println!("{address} < {}", self.program_base);
         if address < self.program_base {
             // mmio address
             if constant::DEBUG_PRINT {
                 println!("mmu_read decode {address} -> mmio::{address}")
             }
-            self.mmio_read_handler(address)
+            Ok(self.mmio.mmio_read_handler(address))
         } else if address < self.ram_base {
             // rom address
             let physical_address = address - self.program_base;
@@ -99,11 +105,12 @@ impl Memory {
     }
     /// writes byte at address
     pub fn mmu_write(&mut self, address: RegisterWidth, byte: u8) -> Result<(), String> {
+        // println!("{address} < {}", self.program_base);
         if address < self.program_base {
             // mmio address
             print!("mmu_write decode {address} -> mmio::{address}");
 
-            self.mmio_write_handler(address, byte)
+            self.mmio.mmio_write_handler(address, byte)
         } else if address < self.ram_base {
             // rom address
             return Err(format!("MemoryAccessViolation :: attempted write operation on read-only address {address:#x?}"));
@@ -156,10 +163,11 @@ impl Memory {
         Ok(())
     }
 
-    fn mmio_read_handler(&self, address: RegisterWidth) -> Result<u8, String> {
-        Err(format!("mmio not implemented"))
-    }
-    fn mmio_write_handler(&mut self, address: RegisterWidth, byte: u8) -> Result<(), String> {
-        Err(format!("mmio not implemented"))
-    }
+    // fn mmio_read_handler(&self, address: RegisterWidth) -> Result<u8, String> {
+    //     // self.mmio.mmio_route(address)
+    //     // Err(format!("mmio not implemented"))
+    // }
+    // fn mmio_write_handler(&mut self, address: RegisterWidth, byte: u8) -> Result<(), String> {
+    //     Err(format!("mmio not implemented"))
+    // }
 }

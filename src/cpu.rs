@@ -109,14 +109,14 @@ pub struct Runtime {
 }
 /// init a new runtime with program loaded
 impl Runtime {
-    pub fn new(debug: bool) -> Self {
-        Runtime {
-            memory: Memory::new(),
+    pub fn new(debug: bool) -> Result<Self, String> {
+        Ok(Runtime {
+            memory: Memory::new()?,
             gpr: GeneralPurposeRegisters::new(),
             spr: SpecialPurposeRegisters::new(),
             state: State::NoProgramLoaded,
             debug,
-        }
+        })
     }
     /// returns mutable reference to a register
     fn get_mut_reg(&mut self, reg_bytes: Vec<u8>) -> Result<&mut RegisterWidth, String> {
@@ -394,7 +394,7 @@ impl Runtime {
         Ok(())
     }
 
-    fn decode_opcode(&self) -> Result<Opcode, String> {
+    fn decode_opcode(&mut self) -> Result<Opcode, String> {
         let opcode_bytes = self
             .memory
             .read_bytes(self.spr.pc, constant::OPCODE_BYTES)?;

@@ -19,7 +19,7 @@ impl Shell {
     /// constructor
     pub fn new() -> Result<Self, String> {
         let debug = true;
-        let runtime = Runtime::new(debug);
+        let runtime = Runtime::new(debug)?;
 
         println!(
             ":: NIMCODE RUNTIME SHELL VERSION {} ::",
@@ -29,6 +29,7 @@ impl Shell {
             Ok(readline) => readline,
             Err(why) => return Err(why.to_string()),
         };
+
         Ok(Shell { runtime, readline })
     }
     /// start/resume shell
@@ -79,6 +80,8 @@ impl Shell {
             "memread" => self.cmd_memread(cmd),
             "ramread" => self.cmd_ramread(cmd),
             "ver" | "version" | "info" => self.cmd_info(cmd),
+            "memwrite" => self.cmd_memwrite(cmd),
+            "ramwrite" => self.cmd_ramwrite(cmd),
             "" => Ok(()),
             _ => Err(format!("unrecognized command [{}]", command_word)),
         }
@@ -183,7 +186,7 @@ impl Shell {
             _ => Ok(println!("invalid memory section")),
         }
     }
-    fn cmd_memread(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+    fn cmd_memread(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
         let address: RegisterWidth = match cmd.next().ok_or("missing address")?.trim().parse() {
             Ok(addr) => addr,
             Err(why) => return Err(format!("could not read address {why}")),
@@ -192,7 +195,21 @@ impl Shell {
         println!("byte at {address}:\n{}", print_value(value as usize));
         Ok(())
     }
-    fn cmd_ramread(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+    fn cmd_memwrite(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+        let address: RegisterWidth = match cmd.next().ok_or("missing address")?.trim().parse() {
+            Ok(addr) => addr,
+            Err(why) => return Err(format!("could not read address {why}")),
+        };
+        let byte: u8 = match cmd.next().ok_or("missing byte")?.trim().parse() {
+            Ok(byte) => byte,
+            Err(why) => return Err(format!("could not write to address {why}")),
+        };
+
+        self.runtime.memory.mmu_write(address, byte)?;
+        println!("wrote byte: {byte} at {address:#x}");
+        Ok(())
+    }
+    fn cmd_ramread(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
         let address: RegisterWidth = match cmd.next().ok_or("missing address")?.trim().parse() {
             Ok(addr) => addr,
             Err(why) => return Err(format!("could not read address {why}")),
@@ -202,6 +219,21 @@ impl Shell {
             .memory
             .mmu_read(address + self.runtime.memory.ram_base)?;
         println!("byte at (ram) {address}:\n{}", print_value(value as usize));
+        Ok(())
+    }
+    fn cmd_ramwrite(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+        let address: RegisterWidth = match cmd.next().ok_or("missing address")?.trim().parse() {
+            Ok(addr) => addr,
+            Err(why) => return Err(format!("could not read address {why}")),
+        };
+        let byte: u8 = match cmd.next().ok_or("missing byte")?.trim().parse() {
+            Ok(byte) => byte,
+            Err(why) => return Err(format!("could not write to address {why}")),
+        };
+        self.runtime
+            .memory
+            .mmu_write(address + self.runtime.memory.ram_base, byte)?;
+        println!("wrote {byte} at (ram) {address}");
         Ok(())
     }
     fn cmd_info(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
