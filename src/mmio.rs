@@ -388,3 +388,6 @@ impl MMIO {
         Ok(())
     }
 }
+
+// if i want to add functions for common operations then it cant be in the mmio handler entirely,
+// it needs to be two scoped. mmio for io and mmfn or smth for those, like what the write syscall is
