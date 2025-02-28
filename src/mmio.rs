@@ -6,6 +6,7 @@ use sdl2::{
     self,
     event::Event,
     keyboard::{Keycode, Mod},
+    libc::INLCR,
     pixels::Color,
     rect::Rect,
     render::{Canvas, TextureQuery},
@@ -15,7 +16,7 @@ use sdl2::{
     EventPump, Sdl, VideoSubsystem,
 };
 
-use crate::constant;
+use crate::constant::{self, RegisterWidth, INIT_VALUE};
 // const PATH: &str = "/home/kyle/CodeSync/rust/nimcode/sdltest/Glass_TTY_VT220.ttf";
 struct Display {
     sdl_context: Sdl,
@@ -289,13 +290,27 @@ const FONT_PATH: &str = "./assets/Glass_TTY_VT220.ttf";
 pub struct MMIO {
     display: TextModeDisplay,
     cursor: Cursor,
+    // // internal mmio chip registers
+    // mr1: RegisterWidth,
+    // mr2: RegisterWidth,
+    // mr3: RegisterWidth,
+    // mr4: RegisterWidth,
+    // mr5: RegisterWidth,
 }
 impl MMIO {
     pub fn new() -> Result<Self, String> {
         let display =
             TextModeDisplay::new(TITLE, COLUMNS, ROWS, SCREEN_WIDTH, SCREEN_HEIGHT, FONT_PATH)?;
         let cursor = Cursor::new(display.columns, display.rows);
-        Ok(MMIO { display, cursor })
+        Ok(MMIO {
+            display,
+            cursor,
+            // mr1: INIT_VALUE,
+            // mr2: INIT_VALUE,
+            // mr3: INIT_VALUE,
+            // mr4: INIT_VALUE,
+            // mr5: INIT_VALUE,
+        })
     }
     /// read addr 0x0 summons this function
     /// pops a value off the key_stack, if no values return 0
@@ -309,6 +324,10 @@ impl MMIO {
         }
     }
     fn write_display_mmio_addr() {}
+
+    // fn write_string(&mut self){
+    //     let string =
+    // }
 
     pub fn mmio_read_handler(&mut self, address: constant::RegisterWidth) -> u8 {
         match address {
@@ -358,7 +377,12 @@ impl MMIO {
                     self.display.write(byte, self.cursor.to_tuple())?
                 }
             }
+            // // load string pointer
+            // 0x6 => self.mr1 = byte as RegisterWidth,
+            // // load string length
+            // 0x7 => self.mr2 = byte as RegisterWidth,
 
+            // // call write
             _ => (),
         };
         Ok(())

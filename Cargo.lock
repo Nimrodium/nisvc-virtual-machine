@@ -117,7 +117,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nim-runtime"
+name = "nisvc-system"
 version = "0.1.0"
 dependencies = [
  "rustyline",
