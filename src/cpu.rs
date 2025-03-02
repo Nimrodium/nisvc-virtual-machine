@@ -491,6 +491,8 @@ impl CPU {
     fn op_jmp(&mut self) -> Result<usize, VMError> {
         let address = slice_to_usize(&self.read_operands(ADDRESS_BYTES)?);
         let pc = self.registers.get_mut_register(PROGRAM_COUNTER)?;
+        log_disassembly!("jmp ${}", address);
+
         pc.write(address)?;
         Ok(0) // jmp moved pc so return 0 so it isnt moved again
     }
