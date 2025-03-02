@@ -11,7 +11,7 @@ use std::{
 };
 // shell mode
 pub struct Shell {
-    runtime: Runtime,
+    pub runtime: Runtime,
     readline: Editor<(), FileHistory>,
 }
 
@@ -82,6 +82,7 @@ impl Shell {
             "ver" | "version" | "info" => self.cmd_info(cmd),
             "memwrite" => self.cmd_memwrite(cmd),
             "ramwrite" => self.cmd_ramwrite(cmd),
+            "s" | "step" => self.cmd_step(cmd),
             "" => Ok(()),
             _ => Err(format!("unrecognized command [{}]", command_word)),
         }
@@ -107,6 +108,11 @@ impl Shell {
         io::stdout().flush().expect("boowomp");
         self.runtime.exec()
     }
+
+    fn cmd_step(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
+        self.runtime.step()
+    }
+
     fn cmd_reset(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
         println!("reset runtime executable");
         self.runtime.spr = SpecialPurposeRegisters::new();

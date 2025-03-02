@@ -1,11 +1,33 @@
 use crate::{
+    _very_verbose_println,
     constant::{self, RegisterWidth},
-    mmio,
+    cpu::{VMError, VMErrorCode},
+    mmio, verbose_println, very_verbose_println, very_very_verbose_println,
 };
 
 // memory.rs
 // memory interaction
 pub type Bytes = Vec<u8>;
+pub struct NewMemory {
+    pub program: Bytes,
+    pub ram: Bytes,
+    pub mmio_base: RegisterWidth,
+    pub program_base: RegisterWidth,
+    // pub rom_exec_base: u64,
+    pub ram_base: RegisterWidth,
+    pub stack: Vec<RegisterWidth>,
+    mmio: mmio::MMIO,
+}
+impl NewMemory {
+    fn init_ram(bytes: usize) -> Vec<u8> {
+        let ram: Vec<u8> = vec![constant::INIT_RAM_VALUE; bytes];
+        verbose_println!(
+            "ram initalized as {bytes} bytes ({}KB)",
+            bytes as f32 / 1000 as f32
+        );
+        ram
+    }
+}
 
 pub struct Memory {
     pub program: Bytes,
@@ -29,7 +51,7 @@ impl Memory {
         ram
         // vec![]
     }
-    pub fn new() -> Result<Self, String> {
+    pub fn new() -> Result<Self, VMError> {
         Ok(Memory {
             program: vec![],
             ram: Memory::init_ram(constant::RAM_SIZE as usize),
@@ -41,15 +63,21 @@ impl Memory {
         })
     }
 
-    pub fn push(&mut self, value: RegisterWidth) -> Result<(), String> {
-        Err("push not implemented".to_string())
+    pub fn push(&mut self, value: RegisterWidth) -> Result<(), VMError> {
+        Err(VMError {
+            code: VMErrorCode::GenericError,
+            reason: "push not implemented".to_string(),
+        })
     }
-    pub fn pop(&mut self) -> Result<RegisterWidth, String> {
-        Err("push not implemented".to_string())
+    pub fn pop(&mut self) -> Result<RegisterWidth, VMError> {
+        Err(VMError {
+            code: VMErrorCode::GenericError,
+            reason: "pop not implemented".to_string(),
+        })
     }
 
     /// return a slice of bytes starting address and extending for bytes
-    pub fn read_bytes(&mut self, address: RegisterWidth, bytes: usize) -> Result<Vec<u8>, String> {
+    pub fn read_bytes(&mut self, address: RegisterWidth, bytes: usize) -> Result<Vec<u8>, VMError> {
         let mut byte_buffer: Vec<u8> = Vec::with_capacity(bytes);
         for n in 0..bytes {
             let byte_address = address + n as RegisterWidth;
@@ -59,104 +87,130 @@ impl Memory {
         Ok(byte_buffer)
     }
     /// write a slice of bytes starting at address and extending for length of bytes inputed
-    pub fn write_bytes(&mut self, address: RegisterWidth, bytes: &[u8]) -> Result<(), String> {
+    pub fn write_bytes(&mut self, address: RegisterWidth, bytes: &[u8]) -> Result<(), VMError> {
         for (n, byte) in bytes.iter().enumerate() {
             let byte_address = address + n as RegisterWidth;
             self.mmu_write(byte_address, *byte)?;
         }
         Ok(())
     }
-    pub fn address_from_bytes(address_bytes: Vec<u8>) -> Result<RegisterWidth, String> {
-        if constant::DEBUG_PRINT {
-            println!("address bytes :: {address_bytes:?}");
-        }
+    pub fn address_from_bytes(address_bytes: Vec<u8>) -> Result<RegisterWidth, VMError> {
         let address_bytes_arr: [u8; size_of::<RegisterWidth>()] = match address_bytes.try_into() {
             Ok(arr) => arr,
-            Err(why) => return Err(format!("error building address from bytes :: {why:?}")),
+            Err(why) => {
+                return Err(VMError {
+                    code: VMErrorCode::GenericError,
+                    reason: format!("error building address from bytes :: {why:?}"),
+                })
+            }
         };
         let address = RegisterWidth::from_le_bytes(address_bytes_arr);
         Ok(address)
     }
 
     /// returns byte at address
-    pub fn mmu_read(&mut self, address: RegisterWidth) -> Result<u8, String> {
+    pub fn mmu_read(&mut self, address: RegisterWidth) -> Result<u8, VMError> {
         // println!("{address} < {}", self.program_base);
         if address < self.program_base {
             // mmio address
             if constant::DEBUG_PRINT {
-                println!("mmu_read decode {address} -> mmio::{address}")
+                // println!("mmu_read decode {address} -> mmio::{address}")
+                // verbose_println!("reading mmio::${address}");
             }
             Ok(self.mmio.mmio_read_handler(address))
         } else if address < self.ram_base {
             // rom address
             let physical_address = address - self.program_base;
-            if constant::DEBUG_PRINT {
-                print!("mmu_read decode {address} -> rom::{physical_address}")
-            }
+
+            // print!("mmu_read decode {address} -> rom::{physical_address}")
+            // verbose_println!("reading rom::${address}");
+
             self.read(physical_address, true)
         } else {
             // ram address
             let physical_address = address - self.ram_base;
-            if constant::DEBUG_PRINT {
-                print!("mmu_read decode {address} -> ram::{physical_address}")
-            }
             self.read(physical_address, false)
         }
     }
     /// writes byte at address
-    pub fn mmu_write(&mut self, address: RegisterWidth, byte: u8) -> Result<(), String> {
+    pub fn mmu_write(&mut self, address: RegisterWidth, byte: u8) -> Result<(), VMError> {
         // println!("{address} < {}", self.program_base);
         if address < self.program_base {
             // mmio address
-            print!("mmu_write decode {address} -> mmio::{address}");
+            // print!("mmu_write decode {address} -> mmio::{address}");
 
             self.mmio.mmio_write_handler(address, byte)
         } else if address < self.ram_base {
             // rom address
-            return Err(format!("MemoryAccessViolation :: attempted write operation on read-only address {address:#x?}"));
+            return Err(VMError {
+                code: VMErrorCode::MemoryAccessViolation,
+                reason: format!("attempted write operation on read-only address {address:#x?}"),
+            });
         } else {
             // ram address
             let physical_address = address - self.ram_base;
-            print!("mmu_write decode {address} -> ram::{physical_address}");
+            // print!("mmu_write decode {address} -> ram::{physical_address}");
 
             self.write(physical_address, byte)
         }
     }
 
-    pub fn flash_ram(&mut self, ram_image: &[u8]) -> Result<(), String> {
-        if constant::DEBUG_PRINT {
-            println!(
-                "flashing ram image\nhead: {}\nimage size {}b",
-                self.ram_base,
-                ram_image.len()
-            );
-        }
-        self.ram.fill(constant::INIT_RAM_VALUE);
-        if constant::DEBUG_PRINT {
-            println!("first ram address {}", self.ram[0]);
-        }
-        self.write_bytes(self.ram_base, ram_image)
+    pub fn flash_ram(&mut self, ram_image: &[u8]) -> Result<(), VMError> {
+        if ram_image.len() == 0 {
+            very_verbose_println!("no ram image provided");
+        } else {
+            very_verbose_println!("flashing ram image of {} byte(s)...\n", ram_image.len());
+            self.ram.fill(constant::INIT_RAM_VALUE);
+            self.write_bytes(self.ram_base, ram_image)?;
+        };
+        Ok(())
     }
 
-    fn read(&self, physical_address: RegisterWidth, is_program: bool) -> Result<u8, String> {
-        let byte = match is_program {
-            true => self.program.get(physical_address as usize).ok_or(format!(
-                "MemoryAccessViolation :: attempted read operation on invalid rom address {physical_address:#x?}"
-            )),
-            false => self.ram.get(physical_address as usize).ok_or(format!(
-                "MemoryAccessViolation :: attempted read operation on invalid ram address {physical_address:#x?}"
-            )),
-        }?;
-        if constant::DEBUG_PRINT {
-            println!("-> [ {byte} ]");
-        }
+    fn read(&self, physical_address: RegisterWidth, is_program: bool) -> Result<u8, VMError> {
+        let byte = if is_program {
+            match self.program.get(physical_address as usize) {
+                Some(b) => b,
+                None => {
+                    return Err(VMError {
+                        code: VMErrorCode::MemoryAccessViolation,
+                        reason: format!(
+                        "attempted read operation on invalid rom address {physical_address:#x?}"
+                    ),
+                    })
+                }
+            }
+        } else {
+            match self.ram.get(physical_address as usize) {
+                Some(b) => b,
+                None => {
+                    return Err(VMError {
+                        code: VMErrorCode::MemoryAccessViolation,
+                        reason: format!(
+                        "attempted read operation on invalid ram address {physical_address:#x?}"
+                    ),
+                    })
+                }
+            }
+        };
+        let name = if is_program { "rom" } else { "ram" };
+        very_very_verbose_println!("reading {name}::${physical_address} -> {byte}");
         Ok(*byte)
     }
 
-    fn write(&mut self, physical_address: RegisterWidth, byte: u8) -> Result<(), String> {
-        let byte_reference = self.ram.get_mut(physical_address as usize).ok_or(format!("MemoryAccessViolation :: attempted write operation on invalid ram address {physical_address:#x?}"))?;
+    fn write(&mut self, physical_address: RegisterWidth, byte: u8) -> Result<(), VMError> {
+        let byte_reference = match self.ram.get_mut(physical_address as usize) {
+            Some(b) => b,
+            None => {
+                return Err(VMError {
+                    code: VMErrorCode::MemoryAccessViolation,
+                    reason: format!(
+                        "attempted read operation on invalid ram address {physical_address:#x?}"
+                    ),
+                })
+            }
+        };
         if constant::DEBUG_PRINT {
-            println!(" -> old::[ {} ] new::[ {byte} ]", *byte_reference);
+            very_very_verbose_println!("${physical_address} <- {byte}");
         }
         *byte_reference = byte;
 

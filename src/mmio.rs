@@ -6,7 +6,6 @@ use sdl2::{
     self,
     event::Event,
     keyboard::{Keycode, Mod},
-    libc::INLCR,
     pixels::Color,
     rect::Rect,
     render::{Canvas, TextureQuery},
@@ -16,7 +15,11 @@ use sdl2::{
     EventPump, Sdl, VideoSubsystem,
 };
 
-use crate::constant::{self, RegisterWidth, INIT_VALUE};
+use crate::{
+    constant::{self},
+    cpu::{VMError, VMErrorCode},
+    verbose_println, very_verbose_println,
+};
 // const PATH: &str = "/home/kyle/CodeSync/rust/nimcode/sdltest/Glass_TTY_VT220.ttf";
 struct Display {
     sdl_context: Sdl,
@@ -25,7 +28,7 @@ struct Display {
     pub canvas: Canvas<Window>,
 }
 impl Display {
-    fn new(title: &str, dimensions: (u32, u32)) -> Result<Self, String> {
+    fn new(title: &str, dimensions: (u32, u32)) -> Result<Self, VMError> {
         let sdl_context = sdl2::init()?;
         let video_subsystem = sdl_context.video()?;
         let window = video_subsystem
@@ -71,7 +74,7 @@ impl TextModeDisplay {
         screen_width: u32,
         screen_height: u32,
         font_path: &str,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, VMError> {
         // let screen_width = 400;
         // let screen_height = 300;
         let cell_width = screen_width / columns;
@@ -298,9 +301,12 @@ pub struct MMIO {
     // mr5: RegisterWidth,
 }
 impl MMIO {
-    pub fn new() -> Result<Self, String> {
+    pub fn new() -> Result<Self, VMError> {
         let display =
-            TextModeDisplay::new(TITLE, COLUMNS, ROWS, SCREEN_WIDTH, SCREEN_HEIGHT, FONT_PATH)?;
+            TextModeDisplay::new(TITLE, COLUMNS, ROWS, SCREEN_WIDTH, SCREEN_HEIGHT, FONT_PATH)
+                .map_err(|err| {
+                    VMError::from(err).with_code(VMErrorCode::DisplayInitializationError)
+                })?;
         let cursor = Cursor::new(display.columns, display.rows);
         Ok(MMIO {
             display,
@@ -339,7 +345,7 @@ impl MMIO {
         &mut self,
         address: constant::RegisterWidth,
         byte: u8,
-    ) -> Result<(), String> {
+    ) -> Result<(), VMError> {
         match address {
             // keyboard input address
             0x0 => self.display.key_stack.push(byte),
@@ -347,16 +353,16 @@ impl MMIO {
             0x1 => match byte {
                 0 => {
                     self.display.display.canvas.window_mut().hide();
-                    println!("hide display")
+                    very_verbose_println!("mmio call :: hide display")
                 }
                 1 => {
                     self.display.display.canvas.window_mut().show();
-                    println!("show display")
+                    very_verbose_println!("mmio call :: show display")
                 }
                 2 => {
                     self.display.display.canvas.present();
                     self.display.display.canvas.clear();
-                    println!("refresh display")
+                    very_verbose_println!("mmio call :: refresh display")
                 }
                 _ => (),
             },
@@ -374,7 +380,20 @@ impl MMIO {
             // display write at cursor
             0x5 => {
                 if byte != 0 {
-                    self.display.write(byte, self.cursor.to_tuple())?
+                    match byte {
+                        10 => {
+                            self.cursor.new_line();
+                        }
+
+                        _ => {
+                            self.display.write(byte, self.cursor.to_tuple())?;
+                            very_verbose_println!(
+                                "mmio call :: write {byte} to display at ({},{})",
+                                self.cursor.x,
+                                self.cursor.y
+                            );
+                        }
+                    }
                 }
             }
             // // load string pointer

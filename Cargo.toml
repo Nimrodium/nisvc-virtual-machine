@@ -4,5 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+colorize = "0.1.0"
 rustyline = "15.0.0"
 sdl2 = { version = "0.37", features = ["ttf"] }
