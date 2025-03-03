@@ -1,7 +1,14 @@
 // mmio.rs
 // for io operations iteracted with using mmio
-use std::{collections::HashMap, process::exit, time::Duration};
+use std::{collections::HashMap, marker::PhantomData, process::exit, sync::Arc, time::Duration};
 
+const TITLE: &str = "NISVC";
+const COLUMNS: u32 = 40;
+const ROWS: u32 = 30;
+const SCREEN_WIDTH: u32 = 400;
+const SCREEN_HEIGHT: u32 = 300;
+const FONT_PATH: &str = "../assets/Glass_TTY_VT220.ttf";
+const FONT_SIZE: u16 = 20;
 use sdl2::{
     self,
     event::Event,
@@ -9,6 +16,7 @@ use sdl2::{
     pixels::Color,
     rect::Rect,
     render::{Canvas, TextureQuery},
+    rwops::RWops,
     surface::Surface,
     ttf::{Font, Sdl2TtfContext},
     video::Window,
@@ -58,13 +66,16 @@ struct TextModeDisplay {
     columns: u32,
     rows: u32,
 
-    ttf_context: Sdl2TtfContext,
+    font: Font<'static, 'static>,
+    // font: Font<'static, 'static>,
+    // ttf_context: Arc<Sdl2TtfContext>,
     font_size: u16,
     font_path: String,
     cell_height: u32,
     cell_width: u32,
     key_stack: Vec<u8>, // each read of the key MMIO address pops from this stack
     event_pump: EventPump,
+    // font_file: &[u8; 0],
 }
 impl TextModeDisplay {
     fn new(
@@ -75,38 +86,32 @@ impl TextModeDisplay {
         screen_height: u32,
         font_path: &str,
     ) -> Result<Self, VMError> {
-        // let screen_width = 400;
-        // let screen_height = 300;
         let cell_width = screen_width / columns;
         let cell_height = screen_height / rows;
-        let font_size = (cell_height as f32 * 0.8) as u16;
 
         let display = Display::new(title, (screen_width, screen_height))?;
-        let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
         let event_pump = display.sdl_context.event_pump()?;
-        // let font = ttf_context
-        //     .load_font(PATH, font_size)
-        //     .map_err(|e| e.to_string())?;
+
+        let font_file_bytes = include_bytes!("../assets/Glass_TTY_VT220.ttf");
+        let ttf_context = Box::leak(Box::new(sdl2::ttf::init().map_err(|e| e.to_string())?));
+        let font =
+            ttf_context.load_font_from_rwops(RWops::from_bytes(font_file_bytes)?, FONT_SIZE)?;
+
         Ok(TextModeDisplay {
             display,
             columns,
             rows,
             cell_height,
             cell_width,
-            ttf_context,
             font_path: font_path.to_string(),
             font_size: 20,
             key_stack: vec![],
+            font,
             event_pump,
+            // ttf_context: Arc::clone(&ttf_context),
         })
     }
-    fn load_font(&self) -> Result<Font<'_, 'static>, String> {
-        let font = self
-            .ttf_context
-            .load_font(self.font_path.as_str(), self.font_size)
-            .map_err(|e| e.to_string())?;
-        Ok(font)
-    }
+
     fn map_grid_coord(&self, cursor: (u32, u32)) -> (u32, u32) {
         let x = cursor.0 * self.cell_width;
         let y = cursor.1 * self.cell_height;
@@ -127,12 +132,15 @@ impl TextModeDisplay {
         Ok(())
     }
     fn ascii_to_surface(&self, ascii_code: u8) -> Result<Surface, String> {
-        let font = self.load_font()?;
+        // let font = self.load_font()?;
+
         // let font = self.font.as_ref();
-        let surface = font
+        let surface = self
+            .font
             .render(&(ascii_code as char).to_string())
             .blended(Color::RGB(255, 255, 255))
             .map_err(|e| e.to_string())?;
+        // todo!();
         Ok(surface)
     }
     /// listens for key presses and returns a translated real value.
@@ -283,12 +291,6 @@ impl Cursor {
         self.y += 1;
     }
 }
-const TITLE: &str = "NISVC";
-const COLUMNS: u32 = 40;
-const ROWS: u32 = 30;
-const SCREEN_WIDTH: u32 = 400;
-const SCREEN_HEIGHT: u32 = 300;
-const FONT_PATH: &str = "./assets/Glass_TTY_VT220.ttf";
 
 pub struct MMIO {
     display: TextModeDisplay,

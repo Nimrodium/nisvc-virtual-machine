@@ -2,6 +2,8 @@ pub const SIGNATURE: &[u8] = b"NISVC-EF";
 pub const NAME: &str = "nisvc-system";
 pub const RUNTIME_VER: &str = "0.4";
 pub const SHELL_PROMPT: &str = ":: ~> ";
+pub const CLOCK_SPEED_HZ: usize = 100;
+
 
 pub type OpcodeSize = u8;
 pub type RegisterWidth = u64;
@@ -21,8 +23,9 @@ pub const KEYBOARD_MMIO_ADDRESS: RegisterWidth = 0x0;
 pub const DISPLAY_MMIO_ADDRESS_START: RegisterWidth = 0x1; // inclusive
 pub const DISPLAY_MMIO_ADDRESS_END: RegisterWidth = 0x29; // inclusive
 
-pub const CLOCK_SPEED_MS: u64 = 10; //milliseconds between clock cycle
+
 pub const DEBUG_PRINT: bool = true;
 
 pub const INIT_RAM_VALUE: u8 = 0xFF;
 pub const RAM_SIZE: RegisterWidth = 1000;
+pub const CLOCK_SPEED_MS: usize = 1 / CLOCK_SPEED_HZ * 1000; //milliseconds between clock cycle

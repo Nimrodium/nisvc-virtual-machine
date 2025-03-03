@@ -8,7 +8,6 @@ use std::{
 };
 
 use colorize::AnsiColor;
-use sdl2::sys::GenericEvent;
 
 use crate::{
     constant::{
@@ -324,7 +323,7 @@ impl CPU {
         Ok(())
     }
     pub fn exec(&mut self) -> Result<(), VMError> {
-        let clock_sleep = std::time::Duration::from_millis(CLOCK_SPEED_MS);
+        let clock_sleep = std::time::Duration::from_millis(CLOCK_SPEED_MS as u64);
         loop {
             std::thread::sleep(clock_sleep);
             self.step()?;

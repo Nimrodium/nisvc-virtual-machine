@@ -8,26 +8,26 @@ use crate::{
 // memory.rs
 // memory interaction
 pub type Bytes = Vec<u8>;
-pub struct NewMemory {
-    pub program: Bytes,
-    pub ram: Bytes,
-    pub mmio_base: RegisterWidth,
-    pub program_base: RegisterWidth,
-    // pub rom_exec_base: u64,
-    pub ram_base: RegisterWidth,
-    pub stack: Vec<RegisterWidth>,
-    mmio: mmio::MMIO,
-}
-impl NewMemory {
-    fn init_ram(bytes: usize) -> Vec<u8> {
-        let ram: Vec<u8> = vec![constant::INIT_RAM_VALUE; bytes];
-        verbose_println!(
-            "ram initalized as {bytes} bytes ({}KB)",
-            bytes as f32 / 1000 as f32
-        );
-        ram
-    }
-}
+// pub struct NewMemory<'a> {
+//     pub program: Bytes,
+//     pub ram: Bytes,
+//     pub mmio_base: RegisterWidth,
+//     pub program_base: RegisterWidth,
+//     // pub rom_exec_base: u64,
+//     pub ram_base: RegisterWidth,
+//     pub stack: Vec<RegisterWidth>,
+//     mmio: mmio::MMIO<'a>,
+// }
+// impl NewMemory {
+//     fn init_ram(bytes: usize) -> Vec<u8> {
+//         let ram: Vec<u8> = vec![constant::INIT_RAM_VALUE; bytes];
+//         verbose_println!(
+//             "ram initalized as {bytes} bytes ({}KB)",
+//             bytes as f32 / 1000 as f32
+//         );
+//         ram
+//     }
+// }
 
 pub struct Memory {
     pub program: Bytes,
