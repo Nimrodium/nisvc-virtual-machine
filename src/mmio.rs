@@ -15,7 +15,7 @@ use sdl2::{
     keyboard::{Keycode, Mod},
     pixels::Color,
     rect::Rect,
-    render::{Canvas, TextureQuery},
+    render::{Canvas, Texture, TextureQuery},
     rwops::RWops,
     surface::Surface,
     ttf::{Font, Sdl2TtfContext},
@@ -66,18 +66,45 @@ struct TextModeDisplay {
     columns: u32,
     rows: u32,
 
-    font: Font<'static, 'static>,
+    // font: Font<'static, 'static>,
     // font: Font<'static, 'static>,
     // ttf_context: Arc<Sdl2TtfContext>,
     font_size: u16,
     font_path: String,
     cell_height: u32,
     cell_width: u32,
+    ascii_cache: HashMap<char, Box<Surface<'static>>>,
     key_stack: Vec<u8>, // each read of the key MMIO address pops from this stack
     event_pump: EventPump,
     // font_file: &[u8; 0],
 }
-impl TextModeDisplay {
+impl<'a> TextModeDisplay {
+    fn generate_ascii_cache(font: &'a Font) -> Result<HashMap<char, Box<Surface<'a>>>, String> {
+        // verbose_println!("generating cache");
+        let mut cache: HashMap<char, Box<Surface>> = HashMap::new();
+        let lowest = 0;
+        let highest = 255;
+
+        for code in lowest..=highest {
+            let ascii_code = code as u8 as char;
+            // println!("{ascii_code}");
+            // let mut ascii = String::new();
+            // ascii.push(ascii_code);
+            let ascii = if ascii_code.is_ascii_graphic() || ascii_code.is_ascii_whitespace() {
+                ascii_code.to_string()
+            } else {
+                '?'.to_string()
+            };
+            let surface = font
+                .render(&ascii)
+                .blended(Color::RGB(255, 255, 255))
+                .map_err(|e| e.to_string())?;
+            cache.insert(ascii_code, Box::new(surface));
+        }
+
+        // todo!();
+        Ok(cache)
+    }
     fn new(
         title: &str,
         columns: u32,
@@ -93,10 +120,13 @@ impl TextModeDisplay {
         let event_pump = display.sdl_context.event_pump()?;
 
         let font_file_bytes = include_bytes!("../assets/Glass_TTY_VT220.ttf");
-        let ttf_context = Box::leak(Box::new(sdl2::ttf::init().map_err(|e| e.to_string())?));
-        let font =
-            ttf_context.load_font_from_rwops(RWops::from_bytes(font_file_bytes)?, FONT_SIZE)?;
-
+        // let ttf_context = Box::leak(Box::new(sdl2::ttf::init().map_err(|e| e.to_string())?));
+        let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
+        let ttf_box = Box::leak(Box::new(ttf_context));
+        let font = ttf_box.load_font_from_rwops(RWops::from_bytes(font_file_bytes)?, FONT_SIZE)?;
+        let font_box = Box::leak(Box::new(font));
+        // let cache = Box::leak(Box::new(TextModeDisplay::generate_ascii_cache(&font)?));
+        let cache = TextModeDisplay::generate_ascii_cache(font_box)?;
         Ok(TextModeDisplay {
             display,
             columns,
@@ -106,9 +136,9 @@ impl TextModeDisplay {
             font_path: font_path.to_string(),
             font_size: 20,
             key_stack: vec![],
-            font,
+            // font,
             event_pump,
-            // ttf_context: Arc::clone(&ttf_context),
+            ascii_cache: cache, // ttf_context: Arc::clone(&ttf_context),
         })
     }
 
@@ -121,7 +151,17 @@ impl TextModeDisplay {
     pub fn write(&mut self, ascii_code: u8, cursor: (u32, u32)) -> Result<(), String> {
         let abs_coord = self.map_grid_coord(cursor);
         // println!("write :: '{}' to {abs_coord:?}", ascii_code as char);
-        let surface = self.ascii_to_surface(ascii_code)?;
+        // let surface = self.ascii_to_surface(ascii_code)?;
+
+        let surface = match self.ascii_cache.get(&(ascii_code as char)) {
+            Some(s) => &**s,
+            None => {
+                return Err(format!(
+                    "could not get character for ascii {} : {}",
+                    ascii_code as char, ascii_code
+                ))
+            }
+        };
         let texture_creator = self.display.canvas.texture_creator();
         let texture = texture_creator
             .create_texture_from_surface(surface)
@@ -131,18 +171,18 @@ impl TextModeDisplay {
         self.display.canvas.copy(&texture, None, Some(target))?;
         Ok(())
     }
-    fn ascii_to_surface(&self, ascii_code: u8) -> Result<Surface, String> {
-        // let font = self.load_font()?;
+    // fn ascii_to_surface(&self, ascii_code: u8) -> Result<Surface, String> {
+    //     // let font = self.load_font()?;
 
-        // let font = self.font.as_ref();
-        let surface = self
-            .font
-            .render(&(ascii_code as char).to_string())
-            .blended(Color::RGB(255, 255, 255))
-            .map_err(|e| e.to_string())?;
-        // todo!();
-        Ok(surface)
-    }
+    //     // let font = self.font.as_ref();
+    //     let surface = self
+    //         .font
+    //         .render(&(ascii_code as char).to_string())
+    //         .blended(Color::RGB(255, 255, 255))
+    //         .map_err(|e| e.to_string())?;
+    //     // todo!();
+    //     Ok(surface)
+    // }
     /// listens for key presses and returns a translated real value.
     pub fn key_processor(&mut self) {
         for event in self.event_pump.poll_iter() {
