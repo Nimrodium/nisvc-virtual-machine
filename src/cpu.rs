@@ -478,31 +478,58 @@ impl CPU {
     //     todo!()
     // }
     fn op_or(&mut self) -> Result<usize, VMError> {
-        todo!()
+        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
+        log_disassembly!("or {}, {}, {}", dest.name, op1.name, op2.name);
+        dest.write(op1.read() | op2.read())?;
+        Ok(OPCODE_BYTES + bytes_read)
     }
     fn op_xor(&mut self) -> Result<usize, VMError> {
-        todo!()
+        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
+        log_disassembly!("shl {}, {}, {}", dest.name, op1.name, op2.name);
+        dest.write(op1.read() ^ op2.read())?;
+        Ok(OPCODE_BYTES + bytes_read)
     }
     fn op_and(&mut self) -> Result<usize, VMError> {
-        todo!()
+        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
+        log_disassembly!("shl {}, {}, {}", dest.name, op1.name, op2.name);
+        dest.write(op1.read() & op2.read())?;
+        Ok(OPCODE_BYTES + bytes_read)
     }
     fn op_not(&mut self) -> Result<usize, VMError> {
-        todo!()
+        let (dest, op, bytes_read) = self.binary_operation_decode()?;
+        log_disassembly!("not {}, {}", dest.name, op.name);
+        dest.write(!op.read())?;
+        Ok(OPCODE_BYTES + bytes_read)
     }
     fn op_shl(&mut self) -> Result<usize, VMError> {
-        todo!()
+        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
+        log_disassembly!("shl {}, {}, {}", dest.name, op1.name, op2.name);
+        dest.write(op1.read().wrapping_shl(op2.read() as u32))?;
+        Ok(OPCODE_BYTES + bytes_read)
     }
     fn op_shr(&mut self) -> Result<usize, VMError> {
-        todo!()
+        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
+        log_disassembly!("shr {}, {}, {}", dest.name, op1.name, op2.name);
+        dest.write(op1.read().wrapping_shr(op2.read() as u32))?;
+        Ok(OPCODE_BYTES + bytes_read)
     }
     fn op_rotl(&mut self) -> Result<usize, VMError> {
-        todo!()
+        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
+        log_disassembly!("rotl {}, {}, {}", dest.name, op1.name, op2.name);
+        dest.write(op1.read().rotate_left(op2.read() as u32))?;
+        Ok(OPCODE_BYTES + bytes_read)
     }
     fn op_rotr(&mut self) -> Result<usize, VMError> {
-        todo!()
+        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
+        log_disassembly!("rotr {}, {}, {}", dest.name, op1.name, op2.name);
+        dest.write(op1.read().rotate_right(op2.read() as u32))?;
+        Ok(OPCODE_BYTES + bytes_read)
     }
     fn op_neg(&mut self) -> Result<usize, VMError> {
-        todo!()
+        let (dest, op, bytes_read) = self.binary_operation_decode()?;
+        log_disassembly!("neg {}", op.name);
+        dest.write(op.read().wrapping_neg())?;
+        Ok(OPCODE_BYTES + bytes_read)
     }
     fn op_jmp(&mut self) -> Result<usize, VMError> {
         let address = register_value_from_slice(&self.read_operands(ADDRESS_BYTES)?);
