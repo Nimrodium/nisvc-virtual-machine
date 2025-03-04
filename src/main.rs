@@ -117,7 +117,7 @@ fn main() -> Result<(), VMError> {
             reason: "no input file".to_string(),
         });
     };
-    let louis = cpu::slice_to_usize(&[0, 1]);
+    let louis = cpu::register_value_from_slice(&[0, 1]);
     vm.load(&f)?;
     vm.exec()?;
 

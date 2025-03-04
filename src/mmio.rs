@@ -1,6 +1,8 @@
 // mmio.rs
 // for io operations iteracted with using mmio
-use std::{collections::HashMap, marker::PhantomData, process::exit, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, marker::PhantomData, process::exit, rc::Rc, sync::Arc, time::Duration,
+};
 
 const TITLE: &str = "NISVC";
 const COLUMNS: u32 = 40;
@@ -123,6 +125,7 @@ impl<'a> TextModeDisplay {
         // let ttf_context = Box::leak(Box::new(sdl2::ttf::init().map_err(|e| e.to_string())?));
         let ttf_context = sdl2::ttf::init().map_err(|e| e.to_string())?;
         let ttf_box = Box::leak(Box::new(ttf_context));
+        // let ttf_arc = Rc::new(ttf_context);
         let font = ttf_box.load_font_from_rwops(RWops::from_bytes(font_file_bytes)?, FONT_SIZE)?;
         let font_box = Box::leak(Box::new(font));
         // let cache = Box::leak(Box::new(TextModeDisplay::generate_ascii_cache(&font)?));

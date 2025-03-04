@@ -63,13 +63,13 @@ impl Memory {
         })
     }
 
-    pub fn push(&mut self, value: RegisterWidth) -> Result<(), VMError> {
+    pub fn push(&mut self, value: usize) -> Result<(), VMError> {
         Err(VMError {
             code: VMErrorCode::GenericError,
             reason: "push not implemented".to_string(),
         })
     }
-    pub fn pop(&mut self) -> Result<RegisterWidth, VMError> {
+    pub fn pop(&mut self) -> Result<usize, VMError> {
         Err(VMError {
             code: VMErrorCode::GenericError,
             reason: "pop not implemented".to_string(),
