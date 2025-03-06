@@ -8,8 +8,6 @@ use std::{
 };
 
 use colorize::AnsiColor;
-use rustyline::DefaultEditor;
-use sdl2::libc::REG_R8;
 
 use crate::{
     constant::{
@@ -17,7 +15,7 @@ use crate::{
         NAME, OPCODE_BYTES, PROGRAM_COUNTER, RAM_SIZE, REAL_STACK_POINTER, REGISTER_BYTES,
         REGISTER_COUNT, RNULL, SIGNATURE, STACK_POINTER,
     },
-    log_disassembly, log_input, log_output,
+    log_input, log_output,
     memory::Memory,
     opcode::OpcodeTable,
     verbose_println, very_verbose_println, very_very_verbose_println, GLOBAL_CLOCK,
