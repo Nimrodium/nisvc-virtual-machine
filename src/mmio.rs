@@ -82,7 +82,8 @@ struct TextModeDisplay {
 }
 impl<'a> TextModeDisplay {
     fn generate_ascii_cache(font: &'a Font) -> Result<HashMap<char, Box<Surface<'a>>>, String> {
-        // verbose_println!("generating cache");
+        very_verbose_println!("generating cache");
+
         let mut cache: HashMap<char, Box<Surface>> = HashMap::new();
         let lowest = 0;
         let highest = 255;
@@ -116,7 +117,7 @@ impl<'a> TextModeDisplay {
         font_path: &str,
     ) -> Result<Self, VMError> {
         let cell_width = screen_width / columns;
-        let cell_height = screen_height / rows;
+        let cell_height = screen_height / rows + 6;
 
         let display = Display::new(title, (screen_width, screen_height))?;
         let event_pump = display.sdl_context.event_pump()?;
@@ -347,6 +348,7 @@ pub struct MMIO {
 }
 impl MMIO {
     pub fn new() -> Result<Self, VMError> {
+        verbose_println!("initializing IO");
         let display =
             TextModeDisplay::new(TITLE, COLUMNS, ROWS, SCREEN_WIDTH, SCREEN_HEIGHT, FONT_PATH)
                 .map_err(|err| {

@@ -8,16 +8,19 @@ use std::{
 };
 
 use colorize::AnsiColor;
+use rustyline::DefaultEditor;
+use sdl2::libc::REG_R8;
 
 use crate::{
     constant::{
-        RegisterCode, RegisterWidth, VMAddress, ADDRESS_BYTES, CLOCK_SPEED_MS, INIT_VALUE,
-        MMIO_ADDRESS_SPACE, NAME, OPCODE_BYTES, RAM_SIZE, REGISTER_BYTES, SIGNATURE,
+        RegisterCode, RegisterWidth, VMAddress, ADDRESS_BYTES, INIT_VALUE, MMIO_ADDRESS_SPACE,
+        NAME, OPCODE_BYTES, PROGRAM_COUNTER, RAM_SIZE, REAL_STACK_POINTER, REGISTER_BYTES,
+        REGISTER_COUNT, RNULL, SIGNATURE, STACK_POINTER,
     },
-    log_disassembly,
+    log_disassembly, log_input, log_output,
     memory::Memory,
     opcode::OpcodeTable,
-    verbose_println, very_verbose_println, very_very_verbose_println,
+    verbose_println, very_verbose_println, very_very_verbose_println, GLOBAL_CLOCK,
 };
 
 #[derive(Clone, Debug)]
@@ -25,7 +28,6 @@ pub enum VMErrorCode {
     MemoryAccessViolation,
     InitError,
     RegisterOverflow,
-    RegisterBytesIncorrectSize,
     InvalidRegisterCode,
     MemoryInitializationError,
     ExecFormatError,
@@ -35,6 +37,9 @@ pub enum VMErrorCode {
     DisplayInitializationError,
     StackOverflow,
     StackUnderflow,
+    ShellError,        // fatal
+    ShellExit,         // exits shell
+    ShellCommandError, // non fatal
 }
 #[derive(Clone)]
 pub struct VMError {
@@ -80,10 +85,11 @@ impl From<String> for VMError {
     }
 }
 #[derive(Clone)]
-struct Register {
+pub struct Register {
     pub value: RegisterWidth,
     pub name: String,
     pub code: RegisterCode,
+    pub locked: bool,
 }
 
 impl Register {
@@ -91,11 +97,12 @@ impl Register {
         Self {
             value: INIT_VALUE,
             name: name.to_string(),
+            locked: false,
             code,
         }
     }
 
-    fn write(&mut self, value: RegisterWidth) -> Result<(), VMError> {
+    pub fn write(&mut self, value: RegisterWidth) -> Result<(), VMError> {
         if value > RegisterWidth::MAX {
             return Err(VMError {
                 code: VMErrorCode::RegisterOverflow,
@@ -106,8 +113,12 @@ impl Register {
                 ),
             });
         }
-        self.value = value as RegisterWidth;
-        verbose_println!("{} <- {value}", self.name);
+        if !self.locked {
+            self.value = value as RegisterWidth;
+        } else {
+            very_verbose_println!("attempted to write to locked register {}", self.name)
+        }
+        log_input!("{} <- {value}", self.name);
         Ok(())
     }
 
@@ -117,8 +128,8 @@ impl Register {
         Ok(())
     }
 
-    fn read(&self) -> RegisterWidth {
-        very_verbose_println!("{} -> {}", self.name, self.value);
+    pub fn read(&self) -> RegisterWidth {
+        log_output!("{} -> {}", self.name, self.value);
         self.value
     }
 }
@@ -128,7 +139,7 @@ impl fmt::Display for Register {
     }
 }
 
-struct CPURegisters {
+pub struct CPURegisters {
     registers: Vec<Register>,
 }
 impl fmt::Display for CPURegisters {
@@ -141,25 +152,27 @@ impl fmt::Display for CPURegisters {
         write!(f, "{string}")
     }
 }
-const REGISTER_COUNT: u8 = 20;
-const PROGRAM_COUNTER: u8 = REGISTER_COUNT + 1;
-const STACK_POINTER: u8 = PROGRAM_COUNTER + 1;
+
 impl CPURegisters {
     fn new() -> Self {
         let mut registers: Vec<Register> = vec![];
+        verbose_println!("initializing registers...");
+        for n in 1..=REGISTER_COUNT {
+            // let code = i + 1;
+            let name = "r".to_string() + n.to_string().as_str();
 
-        for i in 0..REGISTER_COUNT {
-            let code = i + 1;
-            let name = "r".to_string() + code.to_string().as_str();
-
-            registers.push(Register::new(&name, code));
+            registers.push(Register::new(&name, n));
         }
         registers.push(Register::new("pc", PROGRAM_COUNTER));
         registers.push(Register::new("sp", STACK_POINTER));
-
+        registers.push(Register::new("rsp", REAL_STACK_POINTER));
+        let mut rnull = Register::new("null", RNULL);
+        rnull.write(0).unwrap();
+        rnull.locked = true;
+        registers.push(rnull);
         Self { registers }
     }
-    fn get_register(&self, code: RegisterCode) -> Result<&Register, VMError> {
+    pub fn get_register(&self, code: RegisterCode) -> Result<&Register, VMError> {
         if code == 0 {
             return Err(VMError::new(
                 VMErrorCode::InvalidRegisterCode,
@@ -178,7 +191,7 @@ impl CPURegisters {
         };
         Ok(register)
     }
-    fn get_mut_register(&mut self, code: RegisterCode) -> Result<&mut Register, VMError> {
+    pub fn get_mut_register(&mut self, code: RegisterCode) -> Result<&mut Register, VMError> {
         very_very_verbose_println!("accessing register code {code}");
         if code == 0 {
             return Err(VMError::new(
@@ -198,17 +211,38 @@ impl CPURegisters {
         };
         Ok(register)
     }
+
+    pub fn get_register_via_reverse_lookup(
+        &mut self,
+        register_name: &str,
+    ) -> Result<&mut Register, VMError> {
+        let mut reg_buf: Option<&mut Register> = None;
+        for register in &mut self.registers {
+            if register.name == register_name {
+                reg_buf = Some(register)
+            }
+        }
+        if let Some(reg) = reg_buf {
+            return Ok(reg);
+        } else {
+            return Err(VMError::new(
+                VMErrorCode::ShellCommandError,
+                format!("register {register_name} is not a valid register"),
+            ));
+        }
+    }
 }
 
 pub struct CPU {
-    registers: CPURegisters,
-    memory: Memory,
+    pub registers: CPURegisters,
+    pub memory: Memory,
     opcode_table: OpcodeTable,
-    stack_base: RegisterWidth,
-    stack_max: RegisterWidth,
+    pub stack_base: RegisterWidth,
+    pub stack_max: RegisterWidth,
+    clock_speed: usize,
 }
 impl CPU {
-    pub fn new() -> Result<Self, VMError> {
+    pub fn new(clock_speed: usize) -> Result<Self, VMError> {
         let registers = CPURegisters::new();
         very_very_verbose_println!("registers:\n{registers}");
         let memory = match Memory::new() {
@@ -227,10 +261,12 @@ impl CPU {
             opcode_table,
             stack_base: RAM_SIZE,
             stack_max: 0,
+            clock_speed,
         })
     }
 
     pub fn load(&mut self, file_path: &str) -> Result<(), VMError> {
+        verbose_println!("loading file {file_path} ...");
         let mut file = match File::open(file_path) {
             Ok(f) => f,
             Err(err) => {
@@ -259,6 +295,9 @@ impl CPU {
         self.stack_max =
             self.memory.ram_base + (nisvc_ef_file.ram_image.len() + 1) as RegisterWidth;
         self.registers
+            .get_mut_register(STACK_POINTER)?
+            .write(self.stack_base)?;
+        self.registers
             .get_mut_register(PROGRAM_COUNTER)?
             .write(nisvc_ef_file.entry_point)?;
 
@@ -277,7 +316,7 @@ impl CPU {
         Ok(mem_byte)
     }
 
-    fn read_operands(&mut self, requested_slice_length: usize) -> Result<Vec<u8>, VMError> {
+    pub fn read_operands(&mut self, requested_slice_length: usize) -> Result<Vec<u8>, VMError> {
         // let start_address = self.read_from_pc()? as RegisterWidth;
         let start_address =
             (self.registers.get_register(PROGRAM_COUNTER)?.read() as usize) + OPCODE_BYTES;
@@ -330,6 +369,8 @@ impl CPU {
             0x19 => self.op_pop()?,
             0x1a => self.op_call()?,
             0x1b => self.op_ret()?,
+            0x1c => self.op_cache()?,
+            0x1d => self.op_restore()?,
 
             _ => unreachable!(),
         };
@@ -337,10 +378,14 @@ impl CPU {
         let new_pos = pc.read() + (bytes_read as RegisterWidth);
         very_verbose_println!("advancing pc {bytes_read} byte(s)");
         pc.write(new_pos)?;
+        unsafe { GLOBAL_CLOCK += 1 }
         Ok(())
     }
     pub fn exec(&mut self) -> Result<(), VMError> {
-        let clock_sleep = std::time::Duration::from_millis(CLOCK_SPEED_MS as u64);
+        verbose_println!("executing program ...");
+        let clock_sleep = std::time::Duration::from_millis(1000 / self.clock_speed as u64);
+
+        // verbose_println!("sleeping {clock_sleep}");
         loop {
             std::thread::sleep(clock_sleep);
             self.step()?;
@@ -352,7 +397,7 @@ impl CPU {
         Ok(())
     }
 
-    fn trinary_operation_decode(
+    pub fn trinary_operation_decode(
         &mut self,
     ) -> Result<(&mut Register, Register, Register, usize), VMError> {
         let bytes_read = REGISTER_BYTES * 3;
@@ -362,7 +407,7 @@ impl CPU {
         let dest = self.registers.get_mut_register(operand_bytes[0])?;
         Ok((dest, op1, op2, bytes_read))
     }
-    fn binary_operation_decode(&mut self) -> Result<(&mut Register, Register, usize), VMError> {
+    pub fn binary_operation_decode(&mut self) -> Result<(&mut Register, Register, usize), VMError> {
         let bytes_read = REGISTER_BYTES * 2;
         let operand_bytes = self.read_operands(bytes_read)?;
         let op = self.registers.get_register(operand_bytes[1])?.clone();
@@ -370,13 +415,15 @@ impl CPU {
         Ok((dest, op, bytes_read))
     }
 
-    fn unary_operation_decode(&mut self) -> Result<(&mut Register, usize), VMError> {
+    pub fn unary_operation_decode(&mut self) -> Result<(&mut Register, usize), VMError> {
         let bytes_read = REGISTER_BYTES;
         let operand_bytes = self.read_operands(bytes_read)?;
         let dest = self.registers.get_mut_register(operand_bytes[0])?;
         Ok((dest, bytes_read))
     }
-    fn jif_decode(&mut self) -> Result<(&mut Register, Register, RegisterWidth, usize), VMError> {
+    pub fn jif_decode(
+        &mut self,
+    ) -> Result<(&mut Register, Register, RegisterWidth, usize), VMError> {
         let bytes_read = REGISTER_BYTES + ADDRESS_BYTES;
         let operand_bytes = self.read_operands(bytes_read)?;
         let condition = self.registers.get_register(operand_bytes[0])?.clone();
@@ -384,250 +431,9 @@ impl CPU {
         let pc = self.registers.get_mut_register(PROGRAM_COUNTER)?;
         Ok((pc, condition, address, bytes_read))
     }
-    fn op_nop(&mut self) -> Result<usize, VMError> {
-        log_disassembly!("nop");
-        Ok(OPCODE_BYTES)
-    }
-    fn op_mov(&mut self) -> Result<usize, VMError> {
-        let bytes_read = REGISTER_BYTES * 2;
-        let operand_bytes = self.read_operands(bytes_read)?;
 
-        let source_register = self.registers.get_register(operand_bytes[1])?;
-        let source_value = source_register.read();
-        let src_reg_name = source_register.name.clone();
-
-        let destination_register = self.registers.get_mut_register(operand_bytes[0])?;
-        log_disassembly!("mov {}, {src_reg_name}", destination_register.name);
-        destination_register.write(source_value)?;
-
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_movim(&mut self) -> Result<usize, VMError> {
-        // 01 02 05 01
-        let bytes_read = REGISTER_BYTES + 1;
-        let operands = self.read_operands(bytes_read)?;
-        let dest_reg_code = operands[0];
-        let size = operands[1] as usize;
-        let operands_with_immediate = self.read_operands(bytes_read + size)?;
-        let immediate = register_value_from_slice(&operands_with_immediate[bytes_read..]);
-        let dest_reg = self.registers.get_mut_register(dest_reg_code)?;
-        log_disassembly!("movim {}, ${immediate}", dest_reg.name);
-        dest_reg.write(immediate)?;
-        let total_bytes_read = OPCODE_BYTES + bytes_read + size;
-        Ok(total_bytes_read)
-    }
-    /// load x,y,z
-    /// loads bytes starting from z and extending out y bytes into rx up to x's maximum (8 bytes)
-    fn op_load(&mut self) -> Result<usize, VMError> {
-        // let (_, size, addr, bytes_read) = self.trinary_operation_decode()?;
-        // cannot use dest as provided because it needs to access memory as mutable
-
-        let bytes_read = REGISTER_BYTES * 3;
-        let operand_bytes = self.read_operands(bytes_read)?;
-        let addr = self.registers.get_register(operand_bytes[2])?.clone();
-        let size = self.registers.get_register(operand_bytes[1])?.clone();
-
-        let bytes = self
-            .memory
-            .read_bytes(addr.read() as RegisterWidth, size.read() as usize)?;
-        let value = register_value_from_slice(&bytes);
-        verbose_println!("(load) {bytes:?} -> {value}");
-
-        let dest = self.registers.get_mut_register(operand_bytes[0])?;
-        dest.write(value)?;
-        log_disassembly!("load {}, {}, {}", dest.name, size.name, addr.name);
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_store(&mut self) -> Result<usize, VMError> {
-        let bytes_read = REGISTER_BYTES * 3;
-        let operand_bytes = self.read_operands(bytes_read)?;
-        let src_reg = self.registers.get_register(operand_bytes[2])?.clone();
-        let size = self.registers.get_register(operand_bytes[1])?.clone();
-
-        let dest = self.registers.get_mut_register(operand_bytes[0])?;
-        log_disassembly!("store {}, {}, {}", dest.name, size.name, src_reg.name);
-        let bytes =
-            &RegisterWidth::to_le_bytes(src_reg.read() as RegisterWidth)[0..size.read() as usize];
-        self.memory
-            .write_bytes(dest.read() as RegisterWidth, bytes)?;
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_add(&mut self) -> Result<usize, VMError> {
-        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        dest.write(op1.read().wrapping_add(op2.read()))?;
-        log_disassembly!("add {}, {}, {}", dest.name, op1.name, op2.name);
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_sub(&mut self) -> Result<usize, VMError> {
-        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        dest.write(op1.read().wrapping_sub(op2.read()))?;
-        log_disassembly!("sub {}, {}, {}", dest.name, op1.name, op2.name);
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_mult(&mut self) -> Result<usize, VMError> {
-        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        dest.write(op1.read().wrapping_mul(op2.read()))?;
-        log_disassembly!("mult {}, {}, {}", dest.name, op1.name, op2.name);
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-
-    fn op_div(&mut self) -> Result<usize, VMError> {
-        todo!()
-    }
-    // fn op_neg(&mut self) -> Result<usize, VMError> {
-    //     todo!()
-    // }
-    fn op_or(&mut self) -> Result<usize, VMError> {
-        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("or {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read() | op2.read())?;
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_xor(&mut self) -> Result<usize, VMError> {
-        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("shl {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read() ^ op2.read())?;
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_and(&mut self) -> Result<usize, VMError> {
-        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("shl {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read() & op2.read())?;
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_not(&mut self) -> Result<usize, VMError> {
-        let (dest, op, bytes_read) = self.binary_operation_decode()?;
-        log_disassembly!("not {}, {}", dest.name, op.name);
-        dest.write(!op.read())?;
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_shl(&mut self) -> Result<usize, VMError> {
-        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("shl {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read().wrapping_shl(op2.read() as u32))?;
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_shr(&mut self) -> Result<usize, VMError> {
-        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("shr {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read().wrapping_shr(op2.read() as u32))?;
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_rotl(&mut self) -> Result<usize, VMError> {
-        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("rotl {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read().rotate_left(op2.read() as u32))?;
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_rotr(&mut self) -> Result<usize, VMError> {
-        let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("rotr {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read().rotate_right(op2.read() as u32))?;
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_neg(&mut self) -> Result<usize, VMError> {
-        let (dest, op, bytes_read) = self.binary_operation_decode()?;
-        log_disassembly!("neg {}", op.name);
-        dest.write(op.read().wrapping_neg())?;
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_jmp(&mut self) -> Result<usize, VMError> {
-        let address = register_value_from_slice(&self.read_operands(ADDRESS_BYTES)?);
-        let pc = self.registers.get_mut_register(PROGRAM_COUNTER)?;
-        log_disassembly!("jmp ${}", address);
-
-        pc.write(address)?;
-        Ok(0) // jmp moved pc so return 0 so it isnt moved again
-    }
-    fn op_jifz(&mut self) -> Result<usize, VMError> {
-        let (pc, condition, address, bytes_read) = self.jif_decode()?;
-        log_disassembly!("jifz {}, ${}", condition.name, address);
-        if condition.read() == 0 {
-            pc.write(address)?;
-            Ok(0)
-        } else {
-            Ok(OPCODE_BYTES + bytes_read)
-        }
-    }
-    fn op_jifnz(&mut self) -> Result<usize, VMError> {
-        let (pc, condition, address, bytes_read) = self.jif_decode()?;
-        log_disassembly!("jifnz {}, ${}", condition.name, address);
-        if condition.read() != 0 {
-            pc.write(address)?;
-            Ok(0)
-        } else {
-            Ok(OPCODE_BYTES + bytes_read)
-        }
-    }
-    fn op_pr(&mut self) -> Result<usize, VMError> {
-        todo!()
-    }
-    fn op_inc(&mut self) -> Result<usize, VMError> {
-        let (dest, bytes_read) = self.unary_operation_decode()?;
-        let old = dest.read();
-        let new = old + 1;
-        dest.write(new)?;
-        // verbose_println!("{old}+1 = {new}||{}", dest.read());
-        log_disassembly!("inc {}", dest.name);
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_dec(&mut self) -> Result<usize, VMError> {
-        let (dest, bytes_read) = self.unary_operation_decode()?;
-        dest.write(dest.read().wrapping_sub(1))?;
-        log_disassembly!("dec {}", dest.name);
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_push(&mut self) -> Result<usize, VMError> {
-        // push does not actually require the register to be mutable
-        let (register, bytes_read) = self.unary_operation_decode()?;
-        let value = register.read();
-        log_disassembly!("push {}", register.name);
-        self.push(value)?;
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_pop(&mut self) -> Result<usize, VMError> {
-        // if there was no disassembly print this would be valid
-        // let value = self.pop()?;
-        // let (register, bytes_read) = self.unary_operation_decode()?;
-        // register.write(value)?;
-
-        let bytes_read = REGISTER_BYTES;
-        let operand_bytes = self.read_operands(bytes_read)?;
-        let register_name = self.registers.get_register(operand_bytes[0])?.name.clone();
-
-        log_disassembly!("pop {}", register_name);
-
-        let value = self.pop()?;
-
-        self.registers
-            .get_mut_register(operand_bytes[0])?
-            .write(value)?;
-
-        Ok(OPCODE_BYTES + bytes_read)
-    }
-    fn op_call(&mut self) -> Result<usize, VMError> {
-        let bytes_read = ADDRESS_BYTES;
-        let subroutine_address = register_value_from_slice(&self.read_operands(bytes_read)?);
-        let return_address = self.registers.get_register(PROGRAM_COUNTER)?.read()
-            + OPCODE_BYTES as RegisterWidth
-            + bytes_read as RegisterWidth;
-        self.push(return_address)?;
-        self.registers
-            .get_mut_register(PROGRAM_COUNTER)?
-            .write(subroutine_address)?;
-        log_disassembly!("call ${subroutine_address}");
-        Ok(0) // manipulated program counter manually
-    }
-    fn op_ret(&mut self) -> Result<usize, VMError> {
-        let return_address = self.pop()?;
-        self.registers
-            .get_mut_register(PROGRAM_COUNTER)?
-            .write(return_address)?;
-        log_disassembly!("ret");
-        Ok(0)
-    }
     // stack grows downward
-    fn push(&mut self, value: RegisterWidth) -> Result<(), VMError> {
+    pub fn push(&mut self, value: RegisterWidth) -> Result<(), VMError> {
         let sp_current = self.registers.get_register(STACK_POINTER)?.read();
         let value_bytes = value.to_le_bytes();
         let sp_new = sp_current - size_of::<RegisterWidth>() as RegisterWidth;
@@ -635,13 +441,13 @@ impl CPU {
             let position = self.registers.get_register(PROGRAM_COUNTER)?.read();
             return Err(VMError::new(
                 VMErrorCode::StackOverflow,
-                format!("stack overflow at pc {position}"),
+                format!("stack overflow at pc {position} sp {sp_new}"),
             ));
         } else if sp_new > self.stack_base {
             let position = self.registers.get_register(PROGRAM_COUNTER)?.read();
             return Err(VMError::new(
                 VMErrorCode::StackUnderflow,
-                format!("stack underflow at pc {position}"),
+                format!("stack underflow at pc {position} sp {sp_new}"),
             ));
         }
         self.memory.write_bytes(sp_current, &value_bytes)?;
@@ -650,50 +456,21 @@ impl CPU {
         // if sp.read() < self.stack_max {
         //     return Err(VMError::new(VMErrorCode::, reason))
         // }
+        verbose_println!("pushed {value} onto the stack from sp {sp_current}");
         Ok(())
     }
 
-    fn pop(&mut self) -> Result<RegisterWidth, VMError> {
-        let sp_current = self.registers.get_register(STACK_POINTER)?.read();
-        let value_bytes = self
-            .memory
-            .read_bytes(sp_current, size_of::<RegisterWidth>())?;
+    pub fn pop(&mut self) -> Result<RegisterWidth, VMError> {
+        let sp = self.registers.get_mut_register(STACK_POINTER)?;
+        let sp_current = sp.read();
+        let sp_new = sp_current + size_of::<RegisterWidth>() as RegisterWidth;
+        sp.write(sp_new)?;
+        let value_bytes = self.memory.read_bytes(sp_new, size_of::<RegisterWidth>())?;
         let value = register_value_from_slice(&value_bytes);
-        self.registers
-            .get_mut_register(STACK_POINTER)?
-            .write(sp_current + size_of::<RegisterWidth>() as RegisterWidth)?;
+        // self.registers.get_mut_register(STACK_POINTER)?.write()?;
+        verbose_println!("popped {value} off the stack from sp {sp_new}");
         Ok(value)
     }
-}
-
-/// input a slice from start of immediate to the end of the requested operands and it will return the immediate and how many bytes were read
-fn read_immediate_from_operands_slice(slice: &[u8]) -> Result<(RegisterWidth, usize), VMError> {
-    let size = match slice.get(0) {
-        Some(b) => *b as usize,
-        None => {
-            return Err(VMError::new(
-                VMErrorCode::GenericError,
-                format!(
-                    "could not read size of immediate (operands slice length passed was {})",
-                    slice.len()
-                ),
-            ))
-        }
-    };
-    let immediate_bytes = match slice.get(1..size) {
-        Some(bytes) => bytes,
-        None => {
-            return Err(VMError::new(
-                VMErrorCode::GenericError,
-                format!(
-                "could not read immediate bytes from slice. (operands slice length passed was {})",
-                slice.len()
-            ),
-            ))
-        }
-    };
-    let immediate = register_value_from_slice(immediate_bytes);
-    Ok((immediate, size))
 }
 
 struct NISVCEF<'a> {
@@ -720,6 +497,7 @@ impl<'a> fmt::Display for NISVCEF<'a> {
 }
 impl<'a> NISVCEF<'a> {
     fn new(file: &'a [u8]) -> Result<Self, VMError> {
+        verbose_println!("parsing NISVC executable format file ... ");
         let mut head = 0;
         let header_length = SIGNATURE.len() + (8 * 4);
         let header_bytes = match file.get(head..head + header_length) {

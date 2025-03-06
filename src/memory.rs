@@ -52,6 +52,7 @@ impl Memory {
         // vec![]
     }
     pub fn new() -> Result<Self, VMError> {
+        verbose_println!("initializing memory...");
         Ok(Memory {
             program: vec![],
             ram: Memory::init_ram(constant::RAM_SIZE as usize),
