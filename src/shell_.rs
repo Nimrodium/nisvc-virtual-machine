@@ -1,5 +1,5 @@
 use crate::{
-    constant::{SHELL_PROMPT, STACK_POINTER},
+    constant::{RegisterWidth, SHELL_PROMPT, STACK_POINTER},
     cpu::{VMError, VMErrorCode, CPU},
     verbose_println, very_verbose_println, very_very_verbose_println, INPUT_FLAG, OUTPUT_FLAG,
     VERBOSE_FLAG,
@@ -37,6 +37,7 @@ impl CPU {
                 "s" | "step" => self.step(),
                 "logctl" => self.sh_logctl(&mut cmd),
                 "exec" => self.exec(),
+                "rsk" => self.read_stack_from_offset(&mut cmd),
                 _ => Err(VMError::new(
                     VMErrorCode::ShellCommandError,
                     format!("unrecognized command {command_name}"),
@@ -214,8 +215,32 @@ impl CPU {
     fn false_pop(&mut self) -> Result<usize, VMError> {
         let old = self.registers.get_mut_register(STACK_POINTER)?.read();
         let value = self.pop()? as usize;
-        self.registers.get_mut_register(STACK_POINTER)?.write(old)?;
+        self.registers.get_mut_register(STACK_POINTER)?.write(old);
         Ok(value)
+    }
+    fn read_stack_from_offset(&mut self, args: &mut ShellArgs) -> Result<(), VMError> {
+        let offset_str = get_next_arg(args, "missing offset")?;
+        let offset: isize = match offset_str.parse() {
+            Ok(offset) => offset,
+            Err(err) => {
+                return Err(VMError::new(
+                    VMErrorCode::ShellCommandError,
+                    format!("could not format {offset_str} :: {err}"),
+                ))
+            }
+        };
+        let real_stack_ptr = self.registers.get_register(STACK_POINTER)?.read();
+        let target_address =
+            real_stack_ptr.saturating_add_signed(offset as i64 * size_of::<RegisterWidth>() as i64);
+        self.registers
+            .get_mut_register(STACK_POINTER)?
+            .write(target_address);
+        let value = self.pop()?;
+        self.registers
+            .get_mut_register(STACK_POINTER)?
+            .write(real_stack_ptr);
+        println!("value at stack offset {offset} = {value} || {value:#x}");
+        Ok(())
     }
 }
 fn get_next_arg(args: &mut ShellArgs, err_msg: &str) -> Result<String, VMError> {

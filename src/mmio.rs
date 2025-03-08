@@ -17,10 +17,10 @@ use sdl2::{
     keyboard::{Keycode, Mod},
     pixels::Color,
     rect::Rect,
-    render::{Canvas, Texture, TextureQuery},
+    render::{Canvas, TextureQuery},
     rwops::RWops,
     surface::Surface,
-    ttf::{Font, Sdl2TtfContext},
+    ttf::Font,
     video::Window,
     EventPump, Sdl, VideoSubsystem,
 };

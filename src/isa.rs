@@ -18,11 +18,11 @@ impl CPU {
 
         let source_register = self.registers.get_register(operand_bytes[1])?;
         let source_value = source_register.read();
-        let src_reg_name = source_register.name.clone();
+        let src_reg_name = source_register.name();
 
         let destination_register = self.registers.get_mut_register(operand_bytes[0])?;
-        log_disassembly!("mov {}, {src_reg_name}", destination_register.name);
-        destination_register.write(source_value)?;
+        log_disassembly!("mov {}, {src_reg_name}", destination_register.name());
+        destination_register.write(source_value);
 
         Ok(OPCODE_BYTES + bytes_read)
     }
@@ -35,8 +35,8 @@ impl CPU {
         let operands_with_immediate = self.read_operands(bytes_read + size)?;
         let immediate = register_value_from_slice(&operands_with_immediate[bytes_read..]);
         let dest_reg = self.registers.get_mut_register(dest_reg_code)?;
-        log_disassembly!("movim {}, ${immediate}", dest_reg.name);
-        dest_reg.write(immediate)?;
+        log_disassembly!("movim {}, ${immediate}", dest_reg.name());
+        dest_reg.write(immediate);
         let total_bytes_read = OPCODE_BYTES + bytes_read + size;
         Ok(total_bytes_read)
     }
@@ -58,8 +58,8 @@ impl CPU {
         verbose_println!("(load) {bytes:?} -> {value}");
 
         let dest = self.registers.get_mut_register(operand_bytes[0])?;
-        dest.write(value)?;
-        log_disassembly!("load {}, {}, {}", dest.name, size.name, addr.name);
+        dest.write(value);
+        log_disassembly!("load {}, {}, {}", dest.name(), size.name(), addr.name());
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_store(&mut self) -> Result<usize, VMError> {
@@ -69,7 +69,7 @@ impl CPU {
         let size = self.registers.get_register(operand_bytes[1])?.clone();
 
         let dest = self.registers.get_mut_register(operand_bytes[0])?;
-        log_disassembly!("store {}, {}, {}", dest.name, size.name, src_reg.name);
+        log_disassembly!("store {}, {}, {}", dest.name(), size.name(), src_reg.name());
         let bytes =
             &RegisterWidth::to_le_bytes(src_reg.read() as RegisterWidth)[0..size.read() as usize];
         self.memory
@@ -78,20 +78,20 @@ impl CPU {
     }
     pub fn op_add(&mut self) -> Result<usize, VMError> {
         let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        dest.write(op1.read().wrapping_add(op2.read()))?;
-        log_disassembly!("add {}, {}, {}", dest.name, op1.name, op2.name);
+        dest.write(op1.read().wrapping_add(op2.read()));
+        log_disassembly!("add {}, {}, {}", dest.name(), op1.name(), op2.name());
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_sub(&mut self) -> Result<usize, VMError> {
         let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        dest.write(op1.read().wrapping_sub(op2.read()))?;
-        log_disassembly!("sub {}, {}, {}", dest.name, op1.name, op2.name);
+        dest.write(op1.read().wrapping_sub(op2.read()));
+        log_disassembly!("sub {}, {}, {}", dest.name(), op1.name(), op2.name());
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_mult(&mut self) -> Result<usize, VMError> {
         let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        dest.write(op1.read().wrapping_mul(op2.read()))?;
-        log_disassembly!("mult {}, {}, {}", dest.name, op1.name, op2.name);
+        dest.write(op1.read().wrapping_mul(op2.read()));
+        log_disassembly!("mult {}, {}, {}", dest.name(), op1.name(), op2.name());
         Ok(OPCODE_BYTES + bytes_read)
     }
 
@@ -103,56 +103,56 @@ impl CPU {
     // }
     pub fn op_or(&mut self) -> Result<usize, VMError> {
         let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("or {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read() | op2.read())?;
+        log_disassembly!("or {}, {}, {}", dest.name(), op1.name(), op2.name());
+        dest.write(op1.read() | op2.read());
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_xor(&mut self) -> Result<usize, VMError> {
         let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("xor {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read() ^ op2.read())?;
+        log_disassembly!("xor {}, {}, {}", dest.name(), op1.name(), op2.name());
+        dest.write(op1.read() ^ op2.read());
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_and(&mut self) -> Result<usize, VMError> {
         let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("add {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read() & op2.read())?;
+        log_disassembly!("add {}, {}, {}", dest.name(), op1.name(), op2.name());
+        dest.write(op1.read() & op2.read());
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_not(&mut self) -> Result<usize, VMError> {
         let (dest, op, bytes_read) = self.binary_operation_decode()?;
-        log_disassembly!("not {}, {}", dest.name, op.name);
-        dest.write(!op.read())?;
+        log_disassembly!("not {}, {}", dest.name(), op.name());
+        dest.write(!op.read());
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_shl(&mut self) -> Result<usize, VMError> {
         let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("shl {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read().wrapping_shl(op2.read() as u32))?;
+        log_disassembly!("shl {}, {}, {}", dest.name(), op1.name(), op2.name());
+        dest.write(op1.read().wrapping_shl(op2.read() as u32));
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_shr(&mut self) -> Result<usize, VMError> {
         let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("shr {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read().wrapping_shr(op2.read() as u32))?;
+        log_disassembly!("shr {}, {}, {}", dest.name(), op1.name(), op2.name());
+        dest.write(op1.read().wrapping_shr(op2.read() as u32));
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_rotl(&mut self) -> Result<usize, VMError> {
         let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("rotl {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read().rotate_left(op2.read() as u32))?;
+        log_disassembly!("rotl {}, {}, {}", dest.name(), op1.name(), op2.name());
+        dest.write(op1.read().rotate_left(op2.read() as u32));
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_rotr(&mut self) -> Result<usize, VMError> {
         let (dest, op1, op2, bytes_read) = self.trinary_operation_decode()?;
-        log_disassembly!("rotr {}, {}, {}", dest.name, op1.name, op2.name);
-        dest.write(op1.read().rotate_right(op2.read() as u32))?;
+        log_disassembly!("rotr {}, {}, {}", dest.name(), op1.name(), op2.name());
+        dest.write(op1.read().rotate_right(op2.read() as u32));
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_neg(&mut self) -> Result<usize, VMError> {
         let (dest, op, bytes_read) = self.binary_operation_decode()?;
-        log_disassembly!("neg {}", op.name);
-        dest.write(op.read().wrapping_neg())?;
+        log_disassembly!("neg {}", op.name());
+        dest.write(op.read().wrapping_neg());
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_jmp(&mut self) -> Result<usize, VMError> {
@@ -160,14 +160,14 @@ impl CPU {
         let pc = self.registers.get_mut_register(PROGRAM_COUNTER)?;
         log_disassembly!("jmp ${}", address);
 
-        pc.write(address)?;
+        pc.write(address);
         Ok(0) // jmp moved pc so return 0 so it isnt moved again
     }
     pub fn op_jifz(&mut self) -> Result<usize, VMError> {
         let (pc, condition, address, bytes_read) = self.jif_decode()?;
-        log_disassembly!("jifz {}, ${}", condition.name, address);
+        log_disassembly!("jifz {}, ${}", condition.name(), address);
         if condition.read() == 0 {
-            pc.write(address)?;
+            pc.write(address);
             Ok(0)
         } else {
             Ok(OPCODE_BYTES + bytes_read)
@@ -175,9 +175,9 @@ impl CPU {
     }
     pub fn op_jifnz(&mut self) -> Result<usize, VMError> {
         let (pc, condition, address, bytes_read) = self.jif_decode()?;
-        log_disassembly!("jifnz {}, ${}", condition.name, address);
+        log_disassembly!("jifnz {}, ${}", condition.name(), address);
         if condition.read() != 0 {
-            pc.write(address)?;
+            pc.write(address);
             Ok(0)
         } else {
             Ok(OPCODE_BYTES + bytes_read)
@@ -190,22 +190,22 @@ impl CPU {
         let (dest, bytes_read) = self.unary_operation_decode()?;
         let old = dest.read();
         let new = old + 1;
-        dest.write(new)?;
+        dest.write(new);
         // verbose_println!("{old}+1 = {new}||{}", dest.read());
-        log_disassembly!("inc {}", dest.name);
+        log_disassembly!("inc {}", dest.name());
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_dec(&mut self) -> Result<usize, VMError> {
         let (dest, bytes_read) = self.unary_operation_decode()?;
-        dest.write(dest.read().wrapping_sub(1))?;
-        log_disassembly!("dec {}", dest.name);
+        dest.write(dest.read().wrapping_sub(1));
+        log_disassembly!("dec {}", dest.name());
         Ok(OPCODE_BYTES + bytes_read)
     }
     pub fn op_push(&mut self) -> Result<usize, VMError> {
         // push does not actually require the register to be mutable
         let (register, bytes_read) = self.unary_operation_decode()?;
         let value = register.read();
-        log_disassembly!("push {}", register.name);
+        log_disassembly!("push {}", register.name());
         self.push(value)?;
         Ok(OPCODE_BYTES + bytes_read)
     }
@@ -217,13 +217,13 @@ impl CPU {
 
         let bytes_read = REGISTER_BYTES;
         let operand_bytes = self.read_operands(bytes_read)?;
-        let register_name = self.registers.get_register(operand_bytes[0])?.name.clone();
+        let register_name = self.registers.get_register(operand_bytes[0])?.name();
 
         log_disassembly!("pop {}", register_name);
         let value = self.pop()?;
         self.registers
             .get_mut_register(operand_bytes[0])?
-            .write(value)?;
+            .write(value);
 
         Ok(OPCODE_BYTES + bytes_read)
     }
@@ -236,7 +236,7 @@ impl CPU {
         self.push(return_address)?;
         self.registers
             .get_mut_register(PROGRAM_COUNTER)?
-            .write(subroutine_address)?;
+            .write(subroutine_address);
         log_disassembly!("call ${subroutine_address}");
         verbose_println!("jumping to subroutine ${subroutine_address}");
         Ok(0) // manipulated program counter manually
@@ -245,7 +245,7 @@ impl CPU {
         let return_address = self.pop()?;
         self.registers
             .get_mut_register(PROGRAM_COUNTER)?
-            .write(return_address)?;
+            .write(return_address);
         log_disassembly!("ret ${return_address}");
         Ok(0)
     }
@@ -255,16 +255,16 @@ impl CPU {
         log_disassembly!("cache ${x}");
         let fake_sp = self.registers.get_register(STACK_POINTER)?.read();
         for register_code in 1..=x {
-            let register = self.registers.get_register(register_code as u8)?;
-            self.push(register.read())?;
+            let register_value = self.registers.get_register(register_code as u8)?.read();
+            self.push(register_value)?;
         }
         let real_sp = self.registers.get_register(STACK_POINTER)?.read();
         self.registers
             .get_mut_register(REAL_STACK_POINTER)?
-            .write(real_sp)?;
+            .write(real_sp);
         self.registers
             .get_mut_register(STACK_POINTER)?
-            .write(fake_sp)?;
+            .write(fake_sp);
 
         Ok(OPCODE_BYTES + 1 + imm_size)
     }
@@ -274,8 +274,14 @@ impl CPU {
         for register_code in x..=1 {
             let restored_value = self.pop()?;
             let register = self.registers.get_mut_register(register_code as u8)?;
-            register.write(restored_value)?;
+            register.write(restored_value);
         }
         Ok(OPCODE_BYTES) // does not take arguments
+    }
+    // wrapper for debug shell or something idk
+    pub fn op_breakpoint(&mut self) -> Result<usize, VMError> {
+        log_disassembly!("breakpoint");
+        self.debug_shell()?;
+        Ok(OPCODE_BYTES)
     }
 }

@@ -27,11 +27,13 @@ pub const DEBUG_PRINT: bool = true;
 pub const INIT_RAM_VALUE: u8 = 0xFF;
 pub const RAM_SIZE: RegisterWidth = 1000;
 
-pub const REGISTER_COUNT: u8 = 20;
-pub const PROGRAM_COUNTER: u8 = REGISTER_COUNT + 1;
+pub const GPR_COUNT: u8 = 15;
+pub const GPR_START: u8 = 4;
+pub const GPR_END: u8 = GPR_START + GPR_COUNT;
+pub const PROGRAM_COUNTER: u8 = RNULL + 1;
 pub const STACK_POINTER: u8 = PROGRAM_COUNTER + 1;
 pub const REAL_STACK_POINTER: u8 = STACK_POINTER + 1;
-pub const RNULL: u8 = REAL_STACK_POINTER + 1;
+pub const RNULL: u8 = 0;
 
 // pub const CLOCK_SPEED_MS: usize = 1 / CLOCK_SPEED_HZ * 1000; //milliseconds between clock cycle
 // pub const CLOCK_SPEED_MS: usize = (1000 / CLOCK_SPEED_HZ) as usize;

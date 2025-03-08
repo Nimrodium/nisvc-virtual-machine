@@ -11,9 +11,9 @@ use colorize::AnsiColor;
 
 use crate::{
     constant::{
-        RegisterCode, RegisterWidth, VMAddress, ADDRESS_BYTES, INIT_VALUE, MMIO_ADDRESS_SPACE,
-        NAME, OPCODE_BYTES, PROGRAM_COUNTER, RAM_SIZE, REAL_STACK_POINTER, REGISTER_BYTES,
-        REGISTER_COUNT, RNULL, SIGNATURE, STACK_POINTER,
+        RegisterCode, RegisterWidth, VMAddress, ADDRESS_BYTES, GPR_COUNT, INIT_VALUE,
+        MMIO_ADDRESS_SPACE, NAME, OPCODE_BYTES, PROGRAM_COUNTER, RAM_SIZE, REAL_STACK_POINTER,
+        REGISTER_BYTES, RNULL, SIGNATURE, STACK_POINTER,
     },
     log_input, log_output,
     memory::Memory,
@@ -39,6 +39,7 @@ pub enum VMErrorCode {
     ShellExit,         // exits shell
     ShellCommandError, // non fatal
 }
+
 #[derive(Clone)]
 pub struct VMError {
     pub code: VMErrorCode,
@@ -85,55 +86,293 @@ impl From<String> for VMError {
 #[derive(Clone)]
 pub struct Register {
     pub value: RegisterWidth,
-    pub name: String,
+    pub base_name: String,
     pub code: RegisterCode,
     pub locked: bool,
+    window: SubRegisterWindow,
 }
-
+#[derive(Clone)]
+enum SubRegisterWindow {
+    B1,
+    B2,
+    B3,
+    B4,
+    B5,
+    B6,
+    B7,
+    B8,
+    Q1,
+    Q2,
+    Q3,
+    Q4,
+    L,
+    H,
+    F,
+}
+impl SubRegisterWindow {
+    fn to_suffix(&self) -> &str {
+        match self {
+            SubRegisterWindow::B1 => "b1",
+            SubRegisterWindow::B2 => "b2",
+            SubRegisterWindow::B3 => "b3",
+            SubRegisterWindow::B4 => "b4",
+            SubRegisterWindow::B5 => "b5",
+            SubRegisterWindow::B6 => "b6",
+            SubRegisterWindow::B7 => "b7",
+            SubRegisterWindow::B8 => "b8",
+            SubRegisterWindow::Q1 => "q1",
+            SubRegisterWindow::Q2 => "q2",
+            SubRegisterWindow::Q3 => "q3",
+            SubRegisterWindow::Q4 => "q4",
+            SubRegisterWindow::L => "l",
+            SubRegisterWindow::H => "h",
+            SubRegisterWindow::F => "f",
+        }
+    }
+    fn from_suffix(suffix: &str) -> Self {
+        match suffix {
+            "b1" => SubRegisterWindow::B1,
+            "b2" => SubRegisterWindow::B2,
+            "b3" => SubRegisterWindow::B3,
+            "b4" => SubRegisterWindow::B4,
+            "b5" => SubRegisterWindow::B5,
+            "b6" => SubRegisterWindow::B6,
+            "b7" => SubRegisterWindow::B7,
+            "b8" => SubRegisterWindow::B8,
+            "q1" => SubRegisterWindow::Q1,
+            "q2" => SubRegisterWindow::Q2,
+            "q3" => SubRegisterWindow::Q3,
+            "q4" => SubRegisterWindow::Q4,
+            "l" => SubRegisterWindow::L,
+            "h" => SubRegisterWindow::H,
+            "f" => SubRegisterWindow::F,
+            _ => SubRegisterWindow::F,
+        }
+    }
+}
 impl Register {
     fn new(name: &str, code: RegisterCode) -> Self {
         Self {
             value: INIT_VALUE,
-            name: name.to_string(),
+            base_name: name.to_string(),
             locked: false,
+            window: SubRegisterWindow::F,
             code,
         }
     }
-
-    pub fn write(&mut self, value: RegisterWidth) -> Result<(), VMError> {
-        if value > RegisterWidth::MAX {
-            return Err(VMError {
-                code: VMErrorCode::RegisterOverflow,
-                reason: format!(
-                    "cannot write {value} to register {} :: over max int {}",
-                    self.name,
-                    RegisterWidth::MAX
-                ),
-            });
-        }
-        if !self.locked {
-            self.value = value as RegisterWidth;
+    pub fn name(&self) -> String {
+        if self.code < 4 {
+            self.base_name.clone()
         } else {
-            very_verbose_println!("attempted to write to locked register {}", self.name)
+            self.base_name.clone() + self.window.to_suffix()
         }
-        log_input!("{} <- {value}", self.name);
-        Ok(())
     }
 
-    fn write_from_slice(&mut self, bytes: &[u8]) -> Result<(), VMError> {
-        let value = register_value_from_slice(bytes) as RegisterWidth;
-        self.write(value)?;
-        Ok(())
+    pub fn write_at_byte(&mut self, value: u64, i: u8) {
+        if i > 8 || i <= 0 {
+            panic!("attempted to read at an invalid byte index {i} > 8")
+        }
+        let i = i - 1;
+        // println!("pre {value:x}");
+        let byte_mask = 0x00_00_00_00_00_00_00_FF;
+        let clean_value = value & byte_mask;
+        let byte_offset = i * 8;
+        let byte_to_be_inserted = clean_value << byte_offset;
+        println!("{byte_to_be_inserted:0>16x} =\n{clean_value:0>16x} << {byte_offset}",);
+        // println!("shift {byte_to_be_inserted:x} offset to byte {i}");
+        // (b & ~a) | a
+        let inverse_clear_dest_mask = !byte_mask.rotate_left(byte_offset as u32);
+        let masked_reg = self.value & inverse_clear_dest_mask;
+        println!(
+            "masked {} = \n{:0>16x}\n{:0>16x} &\n{masked_reg:0>16x}\n",
+            self.name(),
+            self.value,
+            !byte_mask
+        );
+        // println!("masked reg {masked_reg:#x}");
+
+        self.value = masked_reg | byte_to_be_inserted;
+        println!(
+            "{:0>16} =\n{masked_reg:0>16x} |\n{byte_to_be_inserted:0>16x}",
+            self.value
+        );
+        // println!("inserted {:x}", self.value);
     }
 
-    pub fn read(&self) -> RegisterWidth {
-        log_output!("{} -> {}", self.name, self.value);
-        self.value
+    pub fn write_at_quarter(&mut self, value: u64, i: u8) {
+        if i > 4 || i <= 0 {
+            panic!("attempted to read at an invalid quarter index {i} > 4")
+        }
+        let i = i - 1;
+        // println!("inserting {value:#x}");
+        let byte_offset = i * 16;
+
+        let byte_mask = 0x00_00_00_00_00_00_FF_FF;
+        let clean_value = value & byte_mask;
+        // println!("masked_u64 = {clean_value:#x}");
+        let quarter_to_be_inserted = clean_value << byte_offset;
+
+        // println!("masked_u64 (shifted) = {quarter_to_be_inserted:#x}");
+        let inverse_clear_dest_mask = !byte_mask.rotate_left(byte_offset as u32);
+        let masked_reg = (self.value & inverse_clear_dest_mask);
+
+        self.value = masked_reg | quarter_to_be_inserted;
+
+        // println!("inserted {:x}", self.value);
+    }
+
+    pub fn write_at_half(&mut self, value: u64, i: u8) {
+        if i > 2 || i <= 0 {
+            panic!("attempted to read at an invalid half index {i} > 2")
+        }
+        let i = i - 1;
+        let byte_offset = i * 32;
+        let byte_mask = 0x00_00_00_00_FF_FF_FF_FF;
+        let clean_value = value & byte_mask;
+        let half_to_be_inserted = clean_value << byte_offset;
+        let inverse_clear_dest_mask = !byte_mask.rotate_left(byte_offset as u32);
+        self.value = (self.value & inverse_clear_dest_mask) | half_to_be_inserted;
+        println!("inserted {:x}", self.value);
+    }
+
+    pub fn read_at_byte(&self, i: u8) -> u64 {
+        if i > 8 || i <= 0 {
+            panic!("attempted to read at an invalid byte index {i} > 7")
+        }
+        let i = i - 1; // turn to real index
+        let byte_mask = 0x00_00_00_00_00_00_00_FF << (i * 8);
+        let masked_value = self.value & byte_mask;
+        let shifted_value = masked_value >> (i * 8);
+        shifted_value
+    }
+    pub fn read_at_quarter(&self, i: u8) -> u64 {
+        if i > 4 || i <= 0 {
+            panic!("attempted to read at an invalid byte index {i} > 3")
+        }
+        let i = i - 1;
+        let byte_mask = 0x00_00_00_00_00_00_FF_FF << (i * 16);
+        let masked_value = self.value & byte_mask;
+        let shifted_value = masked_value >> (i * 16);
+        shifted_value
+    }
+    pub fn read_at_half(&self, i: u8) -> u64 {
+        if i > 2 || i <= 0 {
+            panic!("attempted to read at an invalid byte index {i} > 1")
+        }
+        let i = i - 1;
+
+        let byte_mask = 0x00_00_00_00_FF_FF_FF_FF << (i * 32);
+        let masked_value = self.value & byte_mask;
+        let shifted_value = masked_value >> (i * 32);
+        shifted_value
+    }
+    // fn write_byte_sub(&mut self, byte: u8, byte_index: u8) -> Result<(), VMError> {
+
+    //         _ => {
+    //             return Err(VMError::new(
+    //                 VMErrorCode::RegisterOverflow,
+    //                 format!("invalid byte index"),
+    //             ))
+    //         }
+    //     };
+    // }
+    pub fn write(&mut self, value: u64) {
+        log_input!("{} <- {}", self.name(), value);
+        if !self.locked {
+            match self.window {
+                SubRegisterWindow::B1 => self.write_at_byte(value, 1),
+                SubRegisterWindow::B2 => self.write_at_byte(value, 2),
+                SubRegisterWindow::B3 => self.write_at_byte(value, 3),
+                SubRegisterWindow::B4 => self.write_at_byte(value, 4),
+                SubRegisterWindow::B5 => self.write_at_byte(value, 5),
+                SubRegisterWindow::B6 => self.write_at_byte(value, 6),
+                SubRegisterWindow::B7 => self.write_at_byte(value, 7),
+                SubRegisterWindow::B8 => self.write_at_byte(value, 8),
+                SubRegisterWindow::Q1 => self.write_at_quarter(value, 1),
+                SubRegisterWindow::Q2 => self.write_at_quarter(value, 2),
+                SubRegisterWindow::Q3 => self.write_at_quarter(value, 3),
+                SubRegisterWindow::Q4 => self.write_at_quarter(value, 4),
+                SubRegisterWindow::L => self.write_at_half(value, 1),
+                SubRegisterWindow::H => self.write_at_half(value, 2),
+                SubRegisterWindow::F => self.value = value,
+            };
+            // self.value = value as RegisterWidth;
+        } else {
+            very_verbose_println!("attempted to write to locked register {}", self.name())
+        }
+    }
+
+    // pub fn _write(&mut self, value: RegisterWidth) -> Result<(), VMError> {
+    //     if value > RegisterWidth::MAX {
+    //         return Err(VMError {
+    //             code: VMErrorCode::RegisterOverflow,
+    //             reason: format!(
+    //                 "cannot write {value} to register {} :: over max int {}",
+    //                 self.name(),
+    //                 RegisterWidth::MAX
+    //             ),
+    //         });
+    //     }
+    //     if !self.locked {
+    //         self.value = value as RegisterWidth;
+    //     } else {
+    //         very_verbose_println!("attempted to write to locked register {}", self.name())
+    //     }
+    //     log_input!("{} <- {value}", self.name());
+    //     Ok(())
+    // }
+
+    // fn write_from_slice(&mut self, bytes: &[u8]) -> Result<(), VMError> {
+    //     let value = register_value_from_slice(bytes) as RegisterWidth;
+    //     self.write(value);
+    //     Ok(())
+    // }
+
+    // pub fn _read(&self) -> u64 {
+    //     log_output!("{} -> {}", self.name(), self.value);
+    //     self.value
+    // }
+    pub fn read(&self) -> u64 {
+        let value = match self.window {
+            SubRegisterWindow::B1 => self.read_at_byte(1),
+            SubRegisterWindow::B2 => self.read_at_byte(2),
+            SubRegisterWindow::B3 => self.read_at_byte(3),
+            SubRegisterWindow::B4 => self.read_at_byte(4),
+            SubRegisterWindow::B5 => self.read_at_byte(5),
+            SubRegisterWindow::B6 => self.read_at_byte(6),
+            SubRegisterWindow::B7 => self.read_at_byte(7),
+            SubRegisterWindow::B8 => self.read_at_byte(8),
+            SubRegisterWindow::Q1 => self.read_at_quarter(1),
+            SubRegisterWindow::Q2 => self.read_at_quarter(2),
+            SubRegisterWindow::Q3 => self.read_at_quarter(3),
+            SubRegisterWindow::Q4 => self.read_at_quarter(4),
+            SubRegisterWindow::L => self.read_at_half(1),
+            SubRegisterWindow::H => self.read_at_half(2),
+            SubRegisterWindow::F => self.value,
+        };
+        log_output!("{} -> {}", self.name(), value);
+        value
+    }
+    fn as_window_mut(&mut self, window: SubRegisterWindow) -> &mut Self {
+        self.window = window;
+        self
+    }
+    fn as_window(&mut self, window: SubRegisterWindow) -> &Self {
+        self.window = window;
+        self
     }
 }
 impl fmt::Display for Register {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[ {} ({}) ]", self.name, self.value)
+        let value = self.read();
+        write!(
+            f,
+            "[ {} ({:#})|({:#x})|({:#b}) ]",
+            self.name(),
+            value,
+            value,
+            value
+        )
     }
 }
 
@@ -152,10 +391,10 @@ impl fmt::Display for CPURegisters {
 }
 
 impl CPURegisters {
-    fn new() -> Self {
+    fn _new() -> Self {
         let mut registers: Vec<Register> = vec![];
         verbose_println!("initializing registers...");
-        for n in 1..=REGISTER_COUNT {
+        for n in 1..=GPR_COUNT {
             // let code = i + 1;
             let name = "r".to_string() + n.to_string().as_str();
 
@@ -165,70 +404,224 @@ impl CPURegisters {
         registers.push(Register::new("sp", STACK_POINTER));
         registers.push(Register::new("rsp", REAL_STACK_POINTER));
         let mut rnull = Register::new("null", RNULL);
-        rnull.write(0).unwrap();
+        rnull.write(0);
         rnull.locked = true;
         registers.push(rnull);
         Self { registers }
     }
-    pub fn get_register(&self, code: RegisterCode) -> Result<&Register, VMError> {
-        if code == 0 {
-            return Err(VMError::new(
-                VMErrorCode::InvalidRegisterCode,
-                format!("{code} evaluates to -1 which is not a valid register code"),
-            ));
+    fn new() -> Self {
+        verbose_println!("initializing registers...");
+        let mut registers: Vec<Register> = vec![
+            Register::new("null", 0),
+            Register::new("pc", 1),
+            Register::new("sp", 2),
+            Register::new("rsp", 3),
+            Register::new("r1", 4),
+            Register::new("r2", 5),
+            Register::new("r3", 6),
+            Register::new("r4", 7),
+            Register::new("r5", 8),
+            Register::new("r6", 9),
+            Register::new("r7", 10),
+            Register::new("r8", 11),
+            Register::new("r9", 12),
+            Register::new("r10", 13),
+            Register::new("r11", 14),
+            Register::new("r12", 15),
+            Register::new("r13", 16),
+            Register::new("r14", 17),
+            Register::new("r15", 18),
+        ];
+        Self { registers }
+    }
+    pub fn get_register(&mut self, code: RegisterCode) -> Result<&Register, VMError> {
+        let base = code & 0x0F; // mask out subregister field
+        let sub = (code & 0xF0) >> 4; // mask out register field
+        very_very_verbose_println!("getting register {base:#x} sub {sub:#x}");
+        if base as usize > self.registers.len() {
+            panic!("invalid register code");
         }
-        let code_index = (code - 1) as usize;
-        let register = match self.registers.get(code_index) {
-            Some(r) => r,
-            None => {
-                return Err(VMError {
-                    code: VMErrorCode::InvalidRegisterCode,
-                    reason: format!("{code_index} is not a valid register code"),
-                })
+
+        let register: &mut Register = if let Some(r) = self.registers.get_mut(base as usize) {
+            r
+        } else {
+            panic!("register does not exist");
+        };
+        // not subdivided
+
+        let window: SubRegisterWindow = if base <= 3 {
+            SubRegisterWindow::F
+        } else {
+            match sub {
+                0 => SubRegisterWindow::F,
+                1 => SubRegisterWindow::B1,
+                2 => SubRegisterWindow::B2,
+                3 => SubRegisterWindow::B3,
+                4 => SubRegisterWindow::B4,
+                5 => SubRegisterWindow::B5,
+                6 => SubRegisterWindow::B6,
+                7 => SubRegisterWindow::B7,
+                8 => SubRegisterWindow::B8,
+                9 => SubRegisterWindow::Q1,
+                10 => SubRegisterWindow::Q2,
+                11 => SubRegisterWindow::Q3,
+                12 => SubRegisterWindow::Q4,
+                13 => SubRegisterWindow::L,
+                14 => SubRegisterWindow::H,
+                15 => SubRegisterWindow::F,
+                16 => SubRegisterWindow::F,
+                _ => panic!("invalid code"),
             }
         };
-        Ok(register)
+        let windowed_register = register.as_window(window);
+        very_very_verbose_println!("passing register as {}", windowed_register.name());
+        Ok(windowed_register)
     }
     pub fn get_mut_register(&mut self, code: RegisterCode) -> Result<&mut Register, VMError> {
-        very_very_verbose_println!("accessing register code {code}");
-        if code == 0 {
-            return Err(VMError::new(
-                VMErrorCode::InvalidRegisterCode,
-                format!("{code} evaluates to -1 which is not a valid register code"),
-            ));
+        let base = code & 0x0F; // mask out subregister field
+        let sub = (code & 0xF0) >> 4; // mask out register field
+        very_very_verbose_println!("getting register {base:#x} sub {sub:#x}");
+        if base as usize > self.registers.len() {
+            panic!("invalid register code");
         }
-        let code_index = (code - 1) as usize;
-        let register = match self.registers.get_mut(code_index) {
-            Some(r) => r,
-            None => {
-                return Err(VMError {
-                    code: VMErrorCode::InvalidRegisterCode,
-                    reason: format!("{code_index} is not a valid register code"),
-                })
+
+        let register: &mut Register = if let Some(r) = self.registers.get_mut(base as usize) {
+            r
+        } else {
+            panic!("register does not exist");
+        };
+        // not subdivided
+
+        let window: SubRegisterWindow = if base <= 3 {
+            SubRegisterWindow::F
+        } else {
+            match sub {
+                0 => SubRegisterWindow::F,
+                1 => SubRegisterWindow::B1,
+                2 => SubRegisterWindow::B2,
+                3 => SubRegisterWindow::B3,
+                4 => SubRegisterWindow::B4,
+                5 => SubRegisterWindow::B5,
+                6 => SubRegisterWindow::B6,
+                7 => SubRegisterWindow::B7,
+                8 => SubRegisterWindow::B8,
+                9 => SubRegisterWindow::Q1,
+                10 => SubRegisterWindow::Q2,
+                11 => SubRegisterWindow::Q3,
+                12 => SubRegisterWindow::Q4,
+                13 => SubRegisterWindow::L,
+                14 => SubRegisterWindow::H,
+                15 => SubRegisterWindow::F,
+                16 => SubRegisterWindow::F,
+                _ => panic!("invalid code"),
             }
         };
-        Ok(register)
+        let windowed_register = register.as_window_mut(window);
+        very_very_verbose_println!("passing register as {}", windowed_register.name());
+        Ok(windowed_register)
     }
-
     pub fn get_register_via_reverse_lookup(
         &mut self,
         register_name: &str,
     ) -> Result<&mut Register, VMError> {
-        let mut reg_buf: Option<&mut Register> = None;
-        for register in &mut self.registers {
-            if register.name == register_name {
-                reg_buf = Some(register)
+        let valid_sub_names = [
+            "b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "q1", "q2", "q3", "q4", "l", "h", "f",
+        ];
+        let (base_name, window) = match register_name {
+            "null" | "pc" | "sp" | "rsp" => (register_name, "f"),
+
+            _ => (&register_name[..2], {
+                let sub = &register_name[2..];
+                if sub.is_empty() {
+                    "f"
+                } else {
+                    if valid_sub_names.contains(&sub) {
+                        sub
+                    } else {
+                        return Err(VMError::new(
+                            VMErrorCode::ShellCommandError,
+                            format!("{sub} is not a valid subregister"),
+                        ));
+                    }
+                }
+            }),
+        };
+        println!("{base_name}|{window}");
+        let mut reg: Option<&mut Register> = None;
+        for r in &mut self.registers {
+            if r.base_name.as_str() == base_name {
+                reg = Some(r);
             }
         }
-        if let Some(reg) = reg_buf {
-            return Ok(reg);
+        if let Some(r) = reg {
+            let window = SubRegisterWindow::from_suffix(window);
+            Ok(r.as_window_mut(window))
         } else {
-            return Err(VMError::new(
+            Err(VMError::new(
                 VMErrorCode::ShellCommandError,
-                format!("register {register_name} is not a valid register"),
-            ));
+                format!("{register_name} is not a valid register"),
+            ))
         }
     }
+    // pub fn _get_register(&self, code: RegisterCode) -> Result<&Register, VMError> {
+    //     if code == 0 {
+    //         return Err(VMError::new(
+    //             VMErrorCode::InvalidRegisterCode,
+    //             format!("{code} evaluates to -1 which is not a valid register code"),
+    //         ));
+    //     }
+    //     let code_index = (code - 1) as usize;
+    //     let register = match self.registers.get(code_index) {
+    //         Some(r) => r,
+    //         None => {
+    //             return Err(VMError {
+    //                 code: VMErrorCode::InvalidRegisterCode,
+    //                 reason: format!("{code_index:#x} is not a valid register code"),
+    //             })
+    //         }
+    //     };
+    //     Ok(register)
+    // }
+    // pub fn _get_mut_register(&mut self, code: RegisterCode) -> Result<&mut Register, VMError> {
+    //     very_very_verbose_println!("accessing register code {code}");
+    //     if code == 0 {
+    //         return Err(VMError::new(
+    //             VMErrorCode::InvalidRegisterCode,
+    //             format!("{code} evaluates to -1 which is not a valid register code"),
+    //         ));
+    //     }
+    //     let code_index = (code - 1) as usize;
+    //     let register = match self.registers.get_mut(code_index) {
+    //         Some(r) => r,
+    //         None => {
+    //             return Err(VMError {
+    //                 code: VMErrorCode::InvalidRegisterCode,
+    //                 reason: format!("{code_index:#x} is not a valid register code"),
+    //             })
+    //         }
+    //     };
+    //     Ok(register)
+    // }
+
+    // pub fn get_register_via_reverse_lookup(
+    //     &mut self,
+    //     register_name: &str,
+    // ) -> Result<&mut Register, VMError> {
+    //     let mut reg_buf: Option<&mut Register> = None;
+    //     for register in &mut self.registers {
+    //         if register.name() == register_name {
+    //             reg_buf = Some(register)
+    //         }
+    //     }
+    //     if let Some(reg) = reg_buf {
+    //         return Ok(reg);
+    //     } else {
+    //         return Err(VMError::new(
+    //             VMErrorCode::ShellCommandError,
+    //             format!("register {register_name} is not a valid register"),
+    //         ));
+    //     }
+    // }
 }
 
 pub struct CPU {
@@ -294,10 +687,10 @@ impl CPU {
             self.memory.ram_base + (nisvc_ef_file.ram_image.len() + 1) as RegisterWidth;
         self.registers
             .get_mut_register(STACK_POINTER)?
-            .write(self.stack_base)?;
+            .write(self.stack_base);
         self.registers
             .get_mut_register(PROGRAM_COUNTER)?
-            .write(nisvc_ef_file.entry_point)?;
+            .write(nisvc_ef_file.entry_point);
 
         verbose_println!("{nisvc_ef_file}");
         verbose_println!(
@@ -369,13 +762,15 @@ impl CPU {
             0x1b => self.op_ret()?,
             0x1c => self.op_cache()?,
             0x1d => self.op_restore()?,
+            //special
+            0xfe => self.op_breakpoint()?,
 
             _ => unreachable!(),
         };
         let pc = self.registers.get_mut_register(PROGRAM_COUNTER)?;
         let new_pos = pc.read() + (bytes_read as RegisterWidth);
         very_verbose_println!("advancing pc {bytes_read} byte(s)");
-        pc.write(new_pos)?;
+        pc.write(new_pos);
         unsafe { GLOBAL_CLOCK += 1 }
         Ok(())
     }
@@ -450,7 +845,7 @@ impl CPU {
         }
         self.memory.write_bytes(sp_current, &value_bytes)?;
         let sp = self.registers.get_mut_register(STACK_POINTER)?;
-        sp.write(sp_new)?;
+        sp.write(sp_new);
         // if sp.read() < self.stack_max {
         //     return Err(VMError::new(VMErrorCode::, reason))
         // }
@@ -462,7 +857,7 @@ impl CPU {
         let sp = self.registers.get_mut_register(STACK_POINTER)?;
         let sp_current = sp.read();
         let sp_new = sp_current + size_of::<RegisterWidth>() as RegisterWidth;
-        sp.write(sp_new)?;
+        sp.write(sp_new);
         let value_bytes = self.memory.read_bytes(sp_new, size_of::<RegisterWidth>())?;
         let value = register_value_from_slice(&value_bytes);
         // self.registers.get_mut_register(STACK_POINTER)?.write()?;

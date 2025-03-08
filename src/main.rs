@@ -1,4 +1,4 @@
-use std::{path::Path, process::exit};
+use std::{path::Path, process::exit, u64};
 
 use colorize::AnsiColor;
 use constant::{DEFAULT_CLOCK_SPEED, NAME};
@@ -188,6 +188,21 @@ fn main() -> Result<(), VMError> {
     //     Err(err) => handle_fatal_vm_err(err),
     // };
 
+    // r1.write(0x2222222222222222);
+    // r1.write_at_quarter(0x256, 1);
+    // let v255 = r1.read_at_quarter(1);
+    // println!("r1 = {:#x}", r1.read());
+    // println!("v255 = {v255:#x}");
+    // let r1f = vm.registers._get_mut_register(0x04)?;
+    // r1f.write(0xffffffffffffffff);
+    // let r1 = vm.registers._get_mut_register(0x14)?;
+    // println!("{}.read() -> {:#x}", r1.name(), r1._read());
+    // r1.write(0x00);
+    // println!("{}.read() -> {:#x}", r1.name(), r1._read());
+    // let r1f = vm.registers._get_register(0x04)?;
+    // println!("{}.read() -> {:#x}", r1f.name(), r1f._read());
+    // exit(0);
+
     let f = if let Some(f) = file.clone() {
         f
     } else {
@@ -196,6 +211,7 @@ fn main() -> Result<(), VMError> {
             reason: "no input file".to_string(),
         });
     };
+
     vm.load(&f)?;
     if is_shell_instance {
         vm.debug_shell()?;

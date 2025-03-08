@@ -54,6 +54,8 @@ impl OpcodeTable {
             _Opcode::new(0x1b, "ret"),
             _Opcode::new(0x1c, "cache"),
             _Opcode::new(0x1d, "restore"),
+            //special
+            _Opcode::new(0xfe, "breakpoint"),
         ]);
         Self { table }
     }
