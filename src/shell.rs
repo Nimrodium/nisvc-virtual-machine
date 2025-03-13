@@ -1,261 +1,257 @@
 use crate::{
-    constant::{self, RegisterWidth},
-    cpu::{GeneralPurposeRegisters, Runtime, SpecialPurposeRegisters, State},
+    constant::{RegisterWidth, SHELL_PROMPT, STACK_POINTER},
+    cpu::{VMError, VMErrorCode, CPU},
+    verbose_println, very_verbose_println, very_very_verbose_println, INPUT_FLAG, OUTPUT_FLAG,
+    VERBOSE_FLAG,
 };
-use rustyline::{error::ReadlineError, history::FileHistory, DefaultEditor, Editor};
-use std::{
-    fs::read_dir,
-    io::{self, Write},
-    path::Path,
-    process::exit,
-};
-// shell mode
-pub struct Shell {
-    pub runtime: Runtime,
-    readline: Editor<(), FileHistory>,
-}
-
-impl Shell {
-    /// constructor
-    pub fn new() -> Result<Self, String> {
-        let debug = true;
-        let runtime = Runtime::new(debug)?;
-
-        println!(
-            ":: NIMCODE RUNTIME SHELL VERSION {} ::",
-            constant::RUNTIME_VER
-        );
-        let readline = match DefaultEditor::new() {
-            Ok(readline) => readline,
-            Err(why) => return Err(why.to_string()),
+use rustyline::{history::FileHistory, DefaultEditor, Editor};
+use std::{process::exit, str::Split};
+type ShellArgs<'a> = Split<'a, &'a str>;
+impl CPU {
+    pub fn debug_shell(&mut self) -> Result<(), VMError> {
+        verbose_println!("dropped into debug shell");
+        let mut readline = match DefaultEditor::new() {
+            Ok(r) => r,
+            Err(why) => {
+                return Err(VMError::new(
+                    VMErrorCode::ShellError,
+                    format!("failed to initialize readline :: {why}"),
+                ))
+            }
         };
-
-        Ok(Shell { runtime, readline })
-    }
-    /// start/resume shell
-    pub fn start(&mut self) {
         loop {
-            self.prompt()
+            let cmd_str = self.sh_prompt(&mut readline)?;
+            let mut cmd = cmd_str.split(" ");
+            let command_name = match cmd.next() {
+                Some(cmd) => cmd,
+                None => {
+                    very_very_verbose_println!("no input");
+                    continue;
+                }
+            };
+            let result: Result<(), VMError> = match command_name {
+                "exit" => self.sh_exit(),
+                "stop" => self.sh_stop_vm(&mut cmd),
+                "rr" | "read-register" => self.sh_read_register(&mut cmd),
+                "sk" | "stack" => self.sh_stack(&mut cmd),
+                "s" | "step" => self.step(),
+                "logctl" => self.sh_logctl(&mut cmd),
+                "exec" => self.exec(),
+                "rsk" => self.read_stack_from_offset(&mut cmd),
+                _ => Err(VMError::new(
+                    VMErrorCode::ShellCommandError,
+                    format!("unrecognized command {command_name}"),
+                )),
+            };
+            match result {
+                Ok(()) => (),
+                Err(err) => match err.code {
+                    VMErrorCode::ShellExit => return Ok(()),
+                    _ => println!("{err}"),
+                    // VMErrorCode::ShellError =>
+                },
+            }
         }
     }
-    /// display prompt and accept input
-    pub fn prompt(&mut self) {
-        let input_buffer = ("", "");
-        let line = match self
-            .readline
-            .readline_with_initial(constant::SHELL_PROMPT, input_buffer)
-        {
-            Ok(line) => {
-                self.readline.add_history_entry(line.as_str()).unwrap();
-                line
-            }
-            Err(ReadlineError::Interrupted) => {
-                self.cmd_exit();
-            }
-            Err(ReadlineError::Eof) => {
-                panic!()
+
+    fn sh_prompt(&mut self, readline: &mut Editor<(), FileHistory>) -> Result<String, VMError> {
+        let input = match readline.readline(SHELL_PROMPT) {
+            Ok(input) => {
+                match readline.add_history_entry(input.as_str()) {
+                    Ok(_) => (),
+                    Err(_) => verbose_println!("failed to add {input} to history"),
+                };
+                input
             }
             Err(err) => {
-                panic!("Error: {:?}", err);
+                return Err(VMError::new(
+                    VMErrorCode::ShellError,
+                    format!("could not read line :: {err}"), // change to not crash maybe?
+                ));
             }
-        };
-        let mut input = line.trim().split(" ");
-        match self.decode_cmd(&mut input) {
-            Ok(()) => (),
-            Err(why) => println!("{}", why),
         }
-        io::stdout().flush().expect("boowomp");
+        .trim()
+        .to_string();
+
+        Ok(input)
     }
-    fn decode_cmd(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        let command_word = cmd.next().ok_or("missing command")?;
-        match command_word {
-            "exit" => self.cmd_exit(),
-            "louis" => Ok(println!("louised")),
-            "load" => self.cmd_load(cmd),
-            "exec" => self.cmd_exec(cmd),
-            "reset" => self.cmd_reset(cmd),
-            "pr-reg" => self.cmd_print_register(cmd),
-            "dump" => self.cmd_dump(cmd),
-            "ls" => self.cmd_ls(cmd),
-            "memread" => self.cmd_memread(cmd),
-            "ramread" => self.cmd_ramread(cmd),
-            "ver" | "version" | "info" => self.cmd_info(cmd),
-            "memwrite" => self.cmd_memwrite(cmd),
-            "ramwrite" => self.cmd_ramwrite(cmd),
-            "s" | "step" => self.cmd_step(cmd),
-            "" => Ok(()),
-            _ => Err(format!("unrecognized command [{}]", command_word)),
-        }
+    /// exits shell
+    fn sh_exit(&mut self) -> Result<(), VMError> {
+        very_verbose_println!("exited shell");
+        Err(VMError::new(
+            VMErrorCode::ShellExit,
+            "shell exit invoked".to_string(),
+        ))
     }
-    fn cmd_exit(&mut self) -> ! {
-        println!("exiting");
+    /// exits vm
+    fn sh_stop_vm(&mut self, args: &mut ShellArgs) -> ! {
+        very_verbose_println!("stopped virtual machine");
         exit(0);
     }
-    fn cmd_load(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        let binary = Path::new(match cmd.next() {
-            Some(binary) => binary,
-            None => return Err("missing file in command".to_string()),
-        });
 
-        match self.runtime.load(binary) {
-            Ok(()) => Ok(println!("successfully loaded binary file")),
-            Err(why) => return Err(why),
+    fn sh_logctl(&mut self, args: &mut ShellArgs) -> Result<(), VMError> {
+        // let level = match args.next() {
+        //     Some(arg) => arg,
+        //     None => {
+        //         return Err(VMError::new(
+        //             VMErrorCode::ShellCommandError,
+        //             "missing register name".to_string(),
+        //         ))
+        //     }
+        // };
+        let arg = get_next_arg(args, "missing subcommand")?;
+        match arg.as_str() {
+            "0" => unsafe {
+                println!("verbose printing disabled");
+                VERBOSE_FLAG = 0
+            },
+            "1" => unsafe {
+                println!("verbose printing set to 1");
+                VERBOSE_FLAG = 1
+            },
+            "2" => unsafe {
+                println!("verbose printing set to 2");
+                VERBOSE_FLAG = 2
+            },
+            "3" => unsafe {
+                println!("verbose printing set to 3");
+                VERBOSE_FLAG = 3
+            },
+            "output" => unsafe {
+                let on_off = get_next_arg(args, "missing mode on|off")?;
+                match on_off.as_str() {
+                    "on" => {
+                        println!("output logging enabled");
+                        OUTPUT_FLAG = true
+                    }
+                    "off" => {
+                        println!("output logging disabled");
+                        OUTPUT_FLAG = false
+                    }
+                    _ => {
+                        return Err(VMError::new(
+                            VMErrorCode::ShellCommandError,
+                            format!("{arg} is not a valid output subcommand"),
+                        ))
+                    }
+                }
+            },
+            "input" => unsafe {
+                let on_off = get_next_arg(args, "missing mode on|off")?;
+                match on_off.as_str() {
+                    "on" => {
+                        println!("input logging enabled");
+                        INPUT_FLAG = true
+                    }
+                    "off" => {
+                        println!("input logging disabled");
+                        INPUT_FLAG = false
+                    }
+                    _ => {
+                        return Err(VMError::new(
+                            VMErrorCode::ShellCommandError,
+                            format!("{arg} is not a valid input subcommand"),
+                        ))
+                    }
+                }
+            },
+            _ => {
+                return Err(VMError::new(
+                    VMErrorCode::ShellCommandError,
+                    format!("{arg} is not a valid verbosity subcommand"),
+                ))
+            }
         }
-    }
-    fn cmd_exec(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        // self.runtime.spr.pc = 0x10;
-        println!("executing at PC {:#x?}", self.runtime.spr.pc);
-        io::stdout().flush().expect("boowomp");
-        self.runtime.exec()
-    }
-
-    fn cmd_step(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        self.runtime.step()
-    }
-
-    fn cmd_reset(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        println!("reset runtime executable");
-        self.runtime.spr = SpecialPurposeRegisters::new();
-        self.runtime.gpr = GeneralPurposeRegisters::new();
-        self.runtime.state = State::ProgramLoadedNotStarted;
-        self.runtime.spr.pc = 0;
         Ok(())
     }
-    fn cmd_print_register(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        let register_value = match cmd.next().ok_or("missing register")?.trim() {
-            "r1" => self.runtime.gpr.r1,
-            "r2" => self.runtime.gpr.r2,
-            "r3" => self.runtime.gpr.r3,
-            "r4" => self.runtime.gpr.r4,
-            "r5" => self.runtime.gpr.r5,
-            "r6" => self.runtime.gpr.r6,
-            "r7" => self.runtime.gpr.r7,
-            "r8" => self.runtime.gpr.r8,
-            "r9" => self.runtime.gpr.r9,
-            "r10" => self.runtime.gpr.r10,
-            "r11" => self.runtime.gpr.r11,
-            "r12" => self.runtime.gpr.r12,
-            "r13" => self.runtime.gpr.r13,
-            "r14" => self.runtime.gpr.r14,
-            "r15" => self.runtime.gpr.r15,
-            "r16" => self.runtime.gpr.r16,
-            "r17" => self.runtime.gpr.r17,
-            "r18" => self.runtime.gpr.r18,
-            "r19" => self.runtime.gpr.r19,
-            "r20" => self.runtime.gpr.r20,
-            "pc" => self.runtime.spr.pc,
-            "sp" => self.runtime.spr.sp,
-            "o1" => self.runtime.spr.o1,
-            "o2" => self.runtime.spr.o2,
-            "o3" => self.runtime.spr.o3,
-            "o4" => self.runtime.spr.o4,
-            "o5" => self.runtime.spr.o5,
-            "o6" => self.runtime.spr.o6,
-            "o7" => self.runtime.spr.o7,
-            "o8" => self.runtime.spr.o8,
-            "o9" => self.runtime.spr.o9,
-            "o10" => self.runtime.spr.o10,
-            _ => return Err("invalid register".to_string()),
+
+    fn sh_read_register(&mut self, args: &mut ShellArgs) -> Result<(), VMError> {
+        let name = match args.next() {
+            Some(arg) => arg,
+            None => {
+                return Err(VMError::new(
+                    VMErrorCode::ShellCommandError,
+                    "missing register name".to_string(),
+                ))
+            }
         };
-        // println!("unsigned:\n\tdecimal: {register_value}\n\thex: {register_value:#x}\nsigned:\n\tdecimal: {}\n\thex {:#x}",register_value as isize,register_value as isize);
-        println!("{}", print_value(register_value as usize));
+        let register = self.registers.get_register_via_reverse_lookup(name)?;
+        println!("{register}");
         Ok(())
     }
-    fn cmd_ls(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        let directory = match cmd.next() {
-            Some(dir) => dir.trim(),
-            None => ".",
-        };
-        let output = match read_dir(directory) {
-            Ok(output) => output,
-            Err(why) => return Err(format!("could not read directory {directory} {why}")),
-        };
-        let mut output_string = String::new();
-        for entry in output {
-            let entry_unwrapped = match entry {
-                Ok(entry) => entry,
-                Err(why) => return Err(format!("could not read directory entry {}", why)),
-            };
-            let entry_name = entry_unwrapped.file_name();
-            // let entry_type = entry_unwrapped.file_type();
-            let str_entry = format!("{entry_name:#?} ");
-            output_string.push_str(&str_entry);
+    fn sh_step(&mut self, args: ShellArgs) -> Result<(), VMError> {
+        self.step()
+    }
+    fn sh_exec(&mut self, args: ShellArgs) -> Result<(), VMError> {
+        verbose_println!("executing in shell");
+        match self.exec() {
+            Ok(_) => (),
+            Err(err) => println!("{err}"),
         }
-
-        println!("{output_string}");
         Ok(())
     }
-    fn cmd_dump(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        match cmd.next().ok_or("missing memory section")?.trim() {
-            "program" => Ok(println!("program dump {:#x?}", self.runtime.memory.program)),
-            "ram" => Ok(println!("ram dump {:#x?}", self.runtime.memory.ram)),
-            _ => Ok(println!("invalid memory section")),
-        }
+    fn sh_slice(&mut self, args: &mut ShellArgs) -> Result<(), VMError> {
+        todo!()
     }
-    fn cmd_memread(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        let address: RegisterWidth = match cmd.next().ok_or("missing address")?.trim().parse() {
-            Ok(addr) => addr,
-            Err(why) => return Err(format!("could not read address {why}")),
-        };
-        let value = self.runtime.memory.mmu_read(address)?;
-        println!("byte at {address}:\n{}", print_value(value as usize));
-        Ok(())
+    fn sh_stack_slice(&mut self, args: ShellArgs) -> Result<(), VMError> {
+        todo!()
     }
-    fn cmd_memwrite(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        let address: RegisterWidth = match cmd.next().ok_or("missing address")?.trim().parse() {
-            Ok(addr) => addr,
-            Err(why) => return Err(format!("could not read address {why}")),
-        };
-        let byte: u8 = match cmd.next().ok_or("missing byte")?.trim().parse() {
-            Ok(byte) => byte,
-            Err(why) => return Err(format!("could not write to address {why}")),
-        };
-
-        self.runtime.memory.mmu_write(address, byte)?;
-        println!("wrote byte: {byte} at {address:#x}");
-        Ok(())
+    //
+    fn sh_get_ram_base(&mut self, args: ShellArgs) -> Result<(), VMError> {
+        todo!()
     }
-    fn cmd_ramread(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        let address: RegisterWidth = match cmd.next().ok_or("missing address")?.trim().parse() {
-            Ok(addr) => addr,
-            Err(why) => return Err(format!("could not read address {why}")),
-        };
-        let value = self
-            .runtime
-            .memory
-            .mmu_read(address + self.runtime.memory.ram_base)?;
-        println!("byte at (ram) {address}:\n{}", print_value(value as usize));
-        Ok(())
-    }
-    fn cmd_ramwrite(&mut self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        let address: RegisterWidth = match cmd.next().ok_or("missing address")?.trim().parse() {
-            Ok(addr) => addr,
-            Err(why) => return Err(format!("could not read address {why}")),
-        };
-        let byte: u8 = match cmd.next().ok_or("missing byte")?.trim().parse() {
-            Ok(byte) => byte,
-            Err(why) => return Err(format!("could not write to address {why}")),
-        };
-        self.runtime
-            .memory
-            .mmu_write(address + self.runtime.memory.ram_base, byte)?;
-        println!("wrote {byte} at (ram) {address}");
-        Ok(())
-    }
-    fn cmd_info(&self, cmd: &mut std::str::Split<'_, &str>) -> Result<(), String> {
-        println!(
-            "Architecture: NISVC-{}\nRevision: {}\nAllocated RAM: {}KB",
-            size_of::<RegisterWidth>() * 8,
-            constant::RUNTIME_VER,
-            constant::RAM_SIZE as f32 / 1000 as f32
+    // gives info of the stack's state
+    fn sh_stack(&mut self, args: &mut ShellArgs) -> Result<(), VMError> {
+        let position = self.registers.get_register(STACK_POINTER)?.read();
+        let top_value = self.false_pop()?;
+        let msg = format!(
+            "stack:\n\tbase = {}\n\tmax = {}\n\tsp = {position}\n\ttop = {top_value} || {top_value:x}",
+            self.stack_base, self.stack_max
         );
+        println!("{msg}");
+        Ok(())
+    }
+    /// pops from stack without permenantly altering stack pointer
+    fn false_pop(&mut self) -> Result<usize, VMError> {
+        let old = self.registers.get_mut_register(STACK_POINTER)?.read();
+        let value = self.pop()? as usize;
+        self.registers.get_mut_register(STACK_POINTER)?.write(old);
+        Ok(value)
+    }
+    fn read_stack_from_offset(&mut self, args: &mut ShellArgs) -> Result<(), VMError> {
+        let offset_str = get_next_arg(args, "missing offset")?;
+        let offset: isize = match offset_str.parse() {
+            Ok(offset) => offset,
+            Err(err) => {
+                return Err(VMError::new(
+                    VMErrorCode::ShellCommandError,
+                    format!("could not format {offset_str} :: {err}"),
+                ))
+            }
+        };
+        let real_stack_ptr = self.registers.get_register(STACK_POINTER)?.read();
+        let target_address =
+            real_stack_ptr.saturating_add_signed(offset as i64 * size_of::<RegisterWidth>() as i64);
+        self.registers
+            .get_mut_register(STACK_POINTER)?
+            .write(target_address);
+        let value = self.pop()?;
+        self.registers
+            .get_mut_register(STACK_POINTER)?
+            .write(real_stack_ptr);
+        println!("value at stack offset {offset} = {value} || {value:#x}");
         Ok(())
     }
 }
-
-fn print_value(value: usize) -> String {
-    format!(
-        "signed_dec: {}\nunsigned_dec: {value}\nhex: {value:#x}",
-        value as isize
-    )
+fn get_next_arg(args: &mut ShellArgs, err_msg: &str) -> Result<String, VMError> {
+    let arg = match args.next() {
+        Some(arg) => arg,
+        None => {
+            return Err(VMError::new(
+                VMErrorCode::ShellCommandError,
+                err_msg.to_string(),
+            ))
+        }
+    };
+    Ok(arg.to_string())
 }

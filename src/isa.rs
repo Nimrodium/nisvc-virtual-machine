@@ -35,7 +35,7 @@ impl CPU {
         let operands_with_immediate = self.read_operands(bytes_read + size)?;
         let immediate = register_value_from_slice(&operands_with_immediate[bytes_read..]);
         let dest_reg = self.registers.get_mut_register(dest_reg_code)?;
-        log_disassembly!("movim {}, ${immediate}", dest_reg.name());
+        log_disassembly!("ldi {}, ${immediate}", dest_reg.name());
         dest_reg.write(immediate);
         let total_bytes_read = OPCODE_BYTES + bytes_read + size;
         Ok(total_bytes_read)
@@ -281,7 +281,13 @@ impl CPU {
     // wrapper for debug shell or something idk
     pub fn op_breakpoint(&mut self) -> Result<usize, VMError> {
         log_disassembly!("breakpoint");
-        self.debug_shell()?;
+        match self.debug_shell() {
+            Ok(()) => (),
+            Err(err) => match err.code {
+                VMErrorCode::ShellExit => (),
+                _ => return Err(err),
+            },
+        };
         Ok(OPCODE_BYTES)
     }
 }

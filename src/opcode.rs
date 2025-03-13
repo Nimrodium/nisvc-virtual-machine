@@ -26,7 +26,7 @@ impl OpcodeTable {
         let table: HashMap<u8, _Opcode> = HashMap::from([
             _Opcode::new(0x0, "nop"),
             _Opcode::new(0x1, "mov"),
-            _Opcode::new(0x2, "movim"),
+            _Opcode::new(0x2, "ldi"),
             _Opcode::new(0x3, "load"),
             _Opcode::new(0x4, "store"),
             _Opcode::new(0x5, "add"),
