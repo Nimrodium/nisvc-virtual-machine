@@ -4,7 +4,8 @@
 use std::{
     fmt::{self},
     fs::File,
-    io::Read,
+    io::{self, Read, Stderr, Stdin, Stdout},
+    process::exit,
 };
 
 use colorize::AnsiColor;
@@ -18,7 +19,7 @@ use crate::{
     log_input, log_output,
     memory::Memory,
     opcode::OpcodeTable,
-    verbose_println, very_verbose_println, very_very_verbose_println, GLOBAL_CLOCK,
+    verbose_println, very_verbose_println, very_very_verbose_println, DisplayMode, GLOBAL_CLOCK,
 };
 
 #[derive(Clone, Debug)]
@@ -38,6 +39,9 @@ pub enum VMErrorCode {
     ShellError,        // fatal
     ShellExit,         // exits shell
     ShellCommandError, // non fatal
+
+    HostFileIOError,
+    VMFileIOError,
 }
 
 #[derive(Clone)]
@@ -633,10 +637,10 @@ pub struct CPU {
     clock_speed: usize,
 }
 impl CPU {
-    pub fn new(clock_speed: usize) -> Result<Self, VMError> {
+    pub fn new(clock_speed: usize, display: DisplayMode) -> Result<Self, VMError> {
         let registers = CPURegisters::new();
         very_very_verbose_println!("registers:\n{registers}");
-        let memory = match Memory::new() {
+        let memory = match Memory::new(display) {
             Ok(m) => m,
             Err(err) => {
                 return Err(VMError {
@@ -1004,5 +1008,75 @@ impl DebugTable {
     fn new(partition: &[u8]) -> Self {
         verbose_println!("debug table not implemented yet");
         Self
+    }
+}
+
+type VMFD = usize;
+struct VMHostBridge {
+    stdin: Stdin,
+    stdout: Stdout,
+    stderr: Stderr,
+    open_file_vector: Vec<File>,
+}
+
+// bridge isa
+// fopen fd_store filep_ptr filep_len
+// fwrite fd str_ptr str_len
+// fread fd buf_ptr buf_len
+// fclose fd
+
+impl VMHostBridge {
+    fn new() -> Self {
+        // setup stdin & stdout
+        let stdin = std::io::stdin();
+        let stdout = std::io::stdout();
+        let stderr = std::io::stderr();
+        Self {
+            stdin,
+            stdout,
+            stderr,
+            open_file_vector: vec![],
+        }
+    }
+    fn read_vmfd(&self, vmfd: VMFD) -> Result<Vec<u8>, VMError> {
+        todo!()
+    }
+    fn write_vmfd(&mut self, vmfd: VMFD) -> Result<Vec<u8>, VMError> {
+        todo!()
+    }
+
+    fn fopen(&mut self, file_path: &str) -> Result<VMFD, VMError> {
+        let file = match File::open(file_path) {
+            Ok(file) => file,
+            Err(why) => {
+                return Err(VMError::new(
+                    VMErrorCode::HostFileIOError,
+                    format!("failed to open host file :: {why}"),
+                ))
+            }
+        };
+
+        self.open_file_vector.push(file);
+        let vmfd = (self.open_file_vector.len() - 1) + 3;
+        verbose_println!("opened file {file_path} as vmfd-{vmfd}");
+        todo!()
+    }
+    fn fwrite(vmfd: VMFD, bytes: &[u8]) -> Result<(), VMError> {
+        todo!()
+    }
+    fn fread(vmfd: VMFD, length: &[u8]) -> Result<Vec<u8>, VMError> {
+        todo!()
+    }
+    fn fseek(vmfd: VMFD, amount: usize) -> Result<(), VMError> {
+        todo!()
+    }
+    fn exit(code: i32) -> ! {
+        exit(code)
+    }
+    fn sleep(ns: u64) {
+        todo!()
+    }
+    fn get_system_time() -> usize {
+        todo!()
     }
 }

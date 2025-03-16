@@ -17,7 +17,6 @@ mod memory;
 mod mmio;
 mod opcode;
 mod shell;
-// mod shell;
 static mut VERBOSE_FLAG: usize = 0;
 static mut DISASSEMBLE: bool = false;
 static mut VERY_VERBOSE_FLAG: bool = false;
@@ -27,6 +26,10 @@ static mut OUTPUT_FLAG: bool = false;
 // static mut CLOCK_SPEED_MS: usize = 5; //ms
 static mut GLOBAL_CLOCK: usize = 0000;
 
+enum DisplayMode {
+    Window,
+    Stdout,
+}
 fn main() -> Result<(), VMError> {
     let cli_args: Vec<String> = std::env::args().collect();
     let flag_definitions = &[
@@ -36,6 +39,7 @@ fn main() -> Result<(), VMError> {
         FlagArg::new("input", 'i', 0),
         FlagArg::new("output", 'o', 0),
         FlagArg::new("clock-speed", 'c', 1),
+        FlagArg::new("display", 'D', 1),
     ];
     let flags = Flags::new(flag_definitions);
     let parsed_args = match arg_parser::ParsedCLIArgs::parse_arguments(&flags, &cli_args) {
@@ -43,11 +47,17 @@ fn main() -> Result<(), VMError> {
         Err(why) => return Err(VMError::new(VMErrorCode::CLIArgError, why)),
     };
 
-    let mut file: Option<String> = None;
+    let mut file: String = if let Some(f) = parsed_args.raw.get(0) {
+        f.to_string()
+    } else {
+        return Err(VMError::new(
+            VMErrorCode::CLIArgError,
+            "no input file".to_string(),
+        ));
+    };
     let mut is_shell_instance = false;
-    let mut skip = true;
     let mut clock_speed_hz = DEFAULT_CLOCK_SPEED;
-
+    let mut display = DisplayMode::Window;
     for arg in parsed_args.flags {
         match arg.name {
             "shell" => is_shell_instance = true,
@@ -55,6 +65,22 @@ fn main() -> Result<(), VMError> {
             "disassemble" => unsafe { DISASSEMBLE = true },
             "input" => unsafe { INPUT_FLAG = true },
             "output" => unsafe { OUTPUT_FLAG = true },
+            "display" => {
+                let mode_arg = arg.data[0];
+                display = match mode_arg {
+                    "window" => DisplayMode::Window,
+                    "stdout" => DisplayMode::Stdout,
+                    _ => {
+                        return Err(VMError::new(
+                            VMErrorCode::CLIArgError,
+                            format!(
+                            "{mode_arg} is not a valid mode of {}, available are window and stdout",
+                            arg.name
+                        ),
+                        ))
+                    }
+                };
+            }
             "clock-speed" => {
                 clock_speed_hz = match arg.data[0].parse() {
                     Ok(hz) => hz,
@@ -69,18 +95,9 @@ fn main() -> Result<(), VMError> {
             _ => panic!("invalid argument snuck past parser"),
         }
     }
-    let mut vm = cpu::CPU::new(clock_speed_hz)?;
+    let mut vm = cpu::CPU::new(clock_speed_hz, display)?;
 
-    let f = if let Some(f) = file.clone() {
-        f
-    } else {
-        return Err(VMError {
-            code: VMErrorCode::CLIArgError,
-            reason: "no input file".to_string(),
-        });
-    };
-
-    vm.load(&f)?;
+    vm.load(&file)?;
     if is_shell_instance {
         vm.debug_shell()?;
     } else {

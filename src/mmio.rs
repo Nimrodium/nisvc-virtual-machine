@@ -1,7 +1,13 @@
 // mmio.rs
 // for io operations iteracted with using mmio
 use std::{
-    collections::HashMap, marker::PhantomData, process::exit, rc::Rc, sync::Arc, time::Duration,
+    collections::HashMap,
+    io::{stdout, Write},
+    marker::PhantomData,
+    process::exit,
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
 };
 
 const TITLE: &str = "NISVC";
@@ -11,6 +17,10 @@ const SCREEN_WIDTH: u32 = 400;
 const SCREEN_HEIGHT: u32 = 300;
 const FONT_PATH: &str = "../assets/Glass_TTY_VT220.ttf";
 const FONT_SIZE: u16 = 20;
+use crossterm::{
+    execute,
+    terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
+};
 use sdl2::{
     self,
     event::Event,
@@ -28,9 +38,17 @@ use sdl2::{
 use crate::{
     constant::{self},
     cpu::{VMError, VMErrorCode},
-    verbose_println, very_verbose_println,
+    verbose_println, very_verbose_println, DisplayMode,
 };
 // const PATH: &str = "/home/kyle/CodeSync/rust/nimcode/sdltest/Glass_TTY_VT220.ttf";
+
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 struct Display {
     sdl_context: Sdl,
     // ttf_context: Sdl2TtfContext,
@@ -65,9 +83,9 @@ impl Display {
 
 struct TextModeDisplay {
     display: Display,
-    columns: u32,
-    rows: u32,
-
+    // columns: u32,
+    // rows: u32,
+    cursor: Cursor,
     // font: Font<'static, 'static>,
     // font: Font<'static, 'static>,
     // ttf_context: Arc<Sdl2TtfContext>,
@@ -133,8 +151,9 @@ impl<'a> TextModeDisplay {
         let cache = TextModeDisplay::generate_ascii_cache(font_box)?;
         Ok(TextModeDisplay {
             display,
-            columns,
-            rows,
+            // columns,
+            // rows,
+            cursor: Cursor::new(columns, rows),
             cell_height,
             cell_width,
             font_path: font_path.to_string(),
@@ -288,6 +307,7 @@ impl<'a> TextModeDisplay {
         }
     }
 }
+
 struct Cursor {
     pub x: u32,
     pub y: u32,
@@ -336,9 +356,281 @@ impl Cursor {
     }
 }
 
-pub struct MMIO {
-    display: TextModeDisplay,
+struct StdOutDisplay {
+    stdout: std::io::Stdout,
+    key_stack: Vec<u8>,
     cursor: Cursor,
+}
+impl StdOutDisplay {
+    fn new() -> Result<Self, VMError> {
+        let (x_bound, y_bound) = match terminal::size() {
+            Ok(dimensions) => dimensions,
+            Err(why) => {
+                return Err(VMError::new(
+                    VMErrorCode::DisplayInitializationError,
+                    format!("failed to get terminal dimensions :: {why}"),
+                ))
+            }
+        };
+        Ok(Self {
+            stdout: std::io::stdout(),
+            key_stack: vec![],
+            cursor: Cursor::new(x_bound as u32, y_bound as u32),
+        })
+    }
+
+    fn enable_raw_mode() -> Result<(), VMError> {
+        match terminal::enable_raw_mode() {
+            Ok(()) => (),
+            Err(why) => {
+                return Err(VMError::new(
+                    VMErrorCode::DisplayInitializationError,
+                    format!("failed to enter raw terminal mode :: {why}"),
+                ))
+            }
+        };
+        match execute!(stdout(), EnterAlternateScreen) {
+            Ok(()) => (),
+            Err(why) => {
+                return Err(VMError::new(
+                    VMErrorCode::DisplayInitializationError,
+                    format!("failed to enter alternate screen :: {why}"),
+                ))
+            }
+        };
+        Ok(())
+    }
+    fn disable_raw_mode() -> Result<(), VMError> {
+        match terminal::disable_raw_mode() {
+            Ok(()) => (),
+            Err(why) => {
+                return Err(VMError::new(
+                    VMErrorCode::DisplayInitializationError,
+                    format!("failed to leave raw terminal mode :: {why}"),
+                ))
+            }
+        };
+        match execute!(stdout(), LeaveAlternateScreen) {
+            Ok(()) => (),
+            Err(why) => {
+                return Err(VMError::new(
+                    VMErrorCode::GenericError,
+                    format!("failed to leave raw terminal mode :: {why}"),
+                ))
+            }
+        };
+        Ok(())
+    }
+}
+
+enum DisplayContainer {
+    Window(TextModeDisplay),
+    StdOut(StdOutDisplay),
+}
+trait DisplayManager {
+    fn read_event_pump(&mut self) -> u8;
+
+    fn show_display(&mut self) -> Result<(), VMError>;
+    fn hide_display(&mut self) -> Result<(), VMError>;
+    fn refresh_display(&mut self) -> Result<(), VMError>;
+
+    fn write_at_cursor(&mut self, char_ascii: u8) -> Result<(), VMError>;
+    fn move_cursor(&mut self, direction: Direction) -> Result<(), VMError>;
+    fn set_cursor_x(&mut self, x: u32);
+    fn set_cursor_y(&mut self, y: u32);
+    fn cursor_new_line(&mut self);
+    fn get_cursor(&mut self) -> (u32, u32);
+}
+impl DisplayManager for DisplayContainer {
+    fn read_event_pump(&mut self) -> u8 {
+        match self {
+            DisplayContainer::Window(text_mode_display) => text_mode_display.read_event_pump(),
+            DisplayContainer::StdOut(std_out_display) => std_out_display.read_event_pump(),
+        }
+    }
+    fn show_display(&mut self) -> Result<(), VMError> {
+        match self {
+            DisplayContainer::Window(text_mode_display) => text_mode_display.show_display(),
+            DisplayContainer::StdOut(std_out_display) => std_out_display.show_display(),
+        }
+    }
+
+    fn hide_display(&mut self) -> Result<(), VMError> {
+        match self {
+            DisplayContainer::Window(text_mode_display) => text_mode_display.hide_display(),
+            DisplayContainer::StdOut(std_out_display) => std_out_display.hide_display(),
+        }
+    }
+
+    fn refresh_display(&mut self) -> Result<(), VMError> {
+        match self {
+            DisplayContainer::Window(text_mode_display) => text_mode_display.refresh_display(),
+            DisplayContainer::StdOut(std_out_display) => std_out_display.refresh_display(),
+        }
+    }
+
+    fn write_at_cursor(&mut self, char_ascii: u8) -> Result<(), VMError> {
+        match self {
+            DisplayContainer::Window(text_mode_display) => {
+                text_mode_display.write_at_cursor(char_ascii)
+            }
+            DisplayContainer::StdOut(std_out_display) => {
+                std_out_display.write_at_cursor(char_ascii)
+            }
+        }
+    }
+
+    fn move_cursor(&mut self, direction: Direction) -> Result<(), VMError> {
+        match self {
+            DisplayContainer::Window(text_mode_display) => text_mode_display.move_cursor(direction),
+            DisplayContainer::StdOut(std_out_display) => std_out_display.move_cursor(direction),
+        }
+    }
+
+    fn set_cursor_x(&mut self, x: u32) {
+        match self {
+            DisplayContainer::Window(text_mode_display) => text_mode_display.set_cursor_x(x),
+            DisplayContainer::StdOut(std_out_display) => std_out_display.set_cursor_x(x),
+        }
+    }
+
+    fn set_cursor_y(&mut self, y: u32) {
+        match self {
+            DisplayContainer::Window(text_mode_display) => text_mode_display.set_cursor_y(y),
+            DisplayContainer::StdOut(std_out_display) => std_out_display.set_cursor_y(y),
+        }
+    }
+
+    fn cursor_new_line(&mut self) {
+        match self {
+            DisplayContainer::Window(text_mode_display) => text_mode_display.cursor_new_line(),
+            DisplayContainer::StdOut(std_out_display) => std_out_display.cursor_new_line(),
+        }
+    }
+
+    fn get_cursor(&mut self) -> (u32, u32) {
+        match self {
+            DisplayContainer::Window(text_mode_display) => text_mode_display.get_cursor(),
+            DisplayContainer::StdOut(std_out_display) => std_out_display.get_cursor(),
+        }
+    }
+}
+impl DisplayManager for TextModeDisplay {
+    fn read_event_pump(&mut self) -> u8 {
+        self.key_processor();
+        let key = self.key_stack.pop();
+        if let Some(k) = key {
+            k
+        } else {
+            0
+        }
+    }
+
+    fn show_display(&mut self) -> Result<(), VMError> {
+        self.display.canvas.window_mut().show();
+        Ok(())
+    }
+
+    fn hide_display(&mut self) -> Result<(), VMError> {
+        self.display.canvas.window_mut().hide();
+        Ok(())
+    }
+
+    fn refresh_display(&mut self) -> Result<(), VMError> {
+        self.display.canvas.present();
+        self.display.canvas.clear();
+        Ok(())
+    }
+
+    fn write_at_cursor(&mut self, char_ascii: u8) -> Result<(), VMError> {
+        match self.write(char_ascii, self.cursor.to_tuple()) {
+            Ok(_) => Ok(()),
+            Err(why) => Err(VMError::new(VMErrorCode::GenericError, why)),
+        }
+    }
+
+    fn move_cursor(&mut self, direction: Direction) -> Result<(), VMError> {
+        match direction {
+            Direction::Up => self.cursor.up(),
+            Direction::Down => self.cursor.down(),
+            Direction::Left => self.cursor.left(),
+            Direction::Right => self.cursor.right(),
+        }
+        Ok(())
+    }
+
+    fn set_cursor_x(&mut self, x: u32) {
+        self.cursor.x = x
+    }
+
+    fn set_cursor_y(&mut self, y: u32) {
+        self.cursor.y = y
+    }
+
+    fn cursor_new_line(&mut self) {
+        self.cursor.new_line();
+    }
+
+    fn get_cursor(&mut self) -> (u32, u32) {
+        self.cursor.to_tuple()
+    }
+}
+impl DisplayManager for StdOutDisplay {
+    fn read_event_pump(&mut self) -> u8 {
+        let key = self.key_stack.pop();
+        if let Some(k) = key {
+            k
+        } else {
+            0
+        }
+    }
+    fn show_display(&mut self) -> Result<(), VMError> {
+        verbose_println!("mmio_show_display not supported in stdout mode");
+        Ok(())
+    }
+
+    fn hide_display(&mut self) -> Result<(), VMError> {
+        verbose_println!("mmio_hide_display not supported in stdout mode");
+        Ok(())
+    }
+
+    fn refresh_display(&mut self) -> Result<(), VMError> {
+        match std::io::stdout().flush() {
+            Ok(()) => Ok(()),
+            Err(why) => Err(VMError::new(
+                VMErrorCode::GenericError,
+                format!("mmio_refresh_display failed to flush stdout :: {why}"),
+            )),
+        }
+    }
+
+    fn write_at_cursor(&mut self, char_ascii: u8) -> Result<(), VMError> {
+        todo!()
+    }
+
+    fn move_cursor(&mut self, direction: Direction) -> Result<(), VMError> {
+        todo!()
+    }
+
+    fn set_cursor_x(&mut self, x: u32) {
+        self.cursor.x = x;
+    }
+
+    fn set_cursor_y(&mut self, y: u32) {
+        self.cursor.y = y;
+    }
+
+    fn cursor_new_line(&mut self) {
+        self.cursor.new_line();
+    }
+
+    fn get_cursor(&mut self) -> (u32, u32) {
+        self.cursor.to_tuple()
+    }
+}
+pub struct MMIO {
+    display: DisplayContainer,
+    // cursor: Cursor,
     // // internal mmio chip registers
     // mr1: RegisterWidth,
     // mr2: RegisterWidth,
@@ -347,17 +639,40 @@ pub struct MMIO {
     // mr5: RegisterWidth,
 }
 impl MMIO {
-    pub fn new() -> Result<Self, VMError> {
+    pub fn new(display_mode: DisplayMode) -> Result<Self, VMError> {
         verbose_println!("initializing IO");
-        let display =
-            TextModeDisplay::new(TITLE, COLUMNS, ROWS, SCREEN_WIDTH, SCREEN_HEIGHT, FONT_PATH)
+
+        let display = match display_mode {
+            DisplayMode::Window => {
+                let inner = TextModeDisplay::new(
+                    TITLE,
+                    COLUMNS,
+                    ROWS,
+                    SCREEN_WIDTH,
+                    SCREEN_HEIGHT,
+                    FONT_PATH,
+                )
                 .map_err(|err| {
                     VMError::from(err).with_code(VMErrorCode::DisplayInitializationError)
                 })?;
-        let cursor = Cursor::new(display.columns, display.rows);
+                DisplayContainer::Window(inner)
+            }
+
+            DisplayMode::Stdout => {
+                let inner = StdOutDisplay::new()?;
+                DisplayContainer::StdOut(inner)
+            }
+        };
+        // let display =
+        //     TextModeDisplay::new(TITLE, COLUMNS, ROWS, SCREEN_WIDTH, SCREEN_HEIGHT, FONT_PATH)
+        //         .map_err(|err| {
+        //             VMError::from(err).with_code(VMErrorCode::DisplayInitializationError)
+        //         })?;
+        // let cursor = Cursor::new(display.columns, display.rows);
+
         Ok(MMIO {
             display,
-            cursor,
+            // cursor,
             // mr1: INIT_VALUE,
             // mr2: INIT_VALUE,
             // mr3: INIT_VALUE,
@@ -368,16 +683,8 @@ impl MMIO {
     /// read addr 0x0 summons this function
     /// pops a value off the key_stack, if no values return 0
     fn read_key_mmio(&mut self) -> u8 {
-        self.display.key_processor();
-        let key = self.display.key_stack.pop();
-        if let Some(key_u8) = key {
-            return key_u8;
-        } else {
-            return 0;
-        }
+        self.display.read_event_pump()
     }
-    fn write_display_mmio_addr() {}
-
     // fn write_string(&mut self){
     //     let string =
     // }
@@ -395,33 +702,32 @@ impl MMIO {
     ) -> Result<(), VMError> {
         match address {
             // keyboard input address
-            0x0 => self.display.key_stack.push(byte),
+            // 0x0 => self.display.key_stack.push(byte),
             // display state control address
             0x1 => match byte {
                 0 => {
-                    self.display.display.canvas.window_mut().hide();
+                    self.display.hide_display();
                     very_verbose_println!("mmio call :: hide display")
                 }
                 1 => {
-                    self.display.display.canvas.window_mut().show();
+                    self.display.show_display();
                     very_verbose_println!("mmio call :: show display")
                 }
                 2 => {
-                    self.display.display.canvas.present();
-                    self.display.display.canvas.clear();
+                    self.display.refresh_display();
                     very_verbose_println!("mmio call :: refresh display")
                 }
                 _ => (),
             },
             // cursor manual setting addresses
-            0x2 => self.cursor.x = byte as u32,
-            0x3 => self.cursor.y = byte as u32,
+            0x2 => self.display.set_cursor_x(byte as u32),
+            0x3 => self.display.set_cursor_y(byte as u32),
             // cursor control address
             0x4 => match byte {
-                0 => self.cursor.left(),
-                1 => self.cursor.right(),
-                2 => self.cursor.up(),
-                3 => self.cursor.down(),
+                0 => self.display.move_cursor(Direction::Left)?,
+                1 => self.display.move_cursor(Direction::Right)?,
+                2 => self.display.move_cursor(Direction::Up)?,
+                3 => self.display.move_cursor(Direction::Down)?,
                 _ => (),
             },
             // display write at cursor
@@ -429,15 +735,16 @@ impl MMIO {
                 if byte != 0 {
                     match byte {
                         10 => {
-                            self.cursor.new_line();
+                            self.display.cursor_new_line();
                         }
 
                         _ => {
-                            self.display.write(byte, self.cursor.to_tuple())?;
+                            self.display.write_at_cursor(byte);
+                            let (x, y) = self.display.get_cursor();
                             very_verbose_println!(
                                 "mmio call :: write {byte} to display at ({},{})",
-                                self.cursor.x,
-                                self.cursor.y
+                                x,
+                                y
                             );
                         }
                     }

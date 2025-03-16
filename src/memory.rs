@@ -2,7 +2,7 @@ use crate::{
     _very_verbose_println,
     constant::{self, RegisterWidth},
     cpu::{VMError, VMErrorCode},
-    mmio, verbose_println, very_verbose_println, very_very_verbose_println,
+    mmio, verbose_println, very_verbose_println, very_very_verbose_println, DisplayMode,
 };
 
 // memory.rs
@@ -51,7 +51,7 @@ impl Memory {
         ram
         // vec![]
     }
-    pub fn new() -> Result<Self, VMError> {
+    pub fn new(display: DisplayMode) -> Result<Self, VMError> {
         verbose_println!("initializing memory...");
         Ok(Memory {
             program: vec![],
@@ -60,7 +60,7 @@ impl Memory {
             program_base: constant::MMIO_ADDRESS_SPACE as RegisterWidth, // change this when i actually add an mmio system
             ram_base: constant::MMIO_ADDRESS_SPACE as RegisterWidth,
             stack: vec![], // start of ram aka rom.len()-1
-            mmio: mmio::MMIO::new()?,
+            mmio: mmio::MMIO::new(display)?,
         })
     }
 
