@@ -2,13 +2,15 @@
 //
 
 use std::{
+    collections::HashMap,
     fmt::{self},
     fs::File,
-    io::{self, Read, Stderr, Stdin, Stdout},
+    io::{self, Read, Seek, Stderr, Stdin, Stdout, Write},
     process::exit,
 };
 
 use colorize::AnsiColor;
+use sdl2::libc::ERA;
 
 use crate::{
     constant::{
@@ -171,6 +173,9 @@ impl Register {
             self.base_name.clone() + self.window.to_suffix()
         }
     }
+    pub fn extract(&self) -> (String, u64) {
+        (self.name(), self.read())
+    }
 
     pub fn write_at_byte(&mut self, value: u64, i: u8) {
         if i > 8 || i <= 0 {
@@ -182,24 +187,24 @@ impl Register {
         let clean_value = value & byte_mask;
         let byte_offset = i * 8;
         let byte_to_be_inserted = clean_value << byte_offset;
-        println!("{byte_to_be_inserted:0>16x} =\n{clean_value:0>16x} << {byte_offset}",);
+        // println!("{byte_to_be_inserted:0>16x} =\n{clean_value:0>16x} << {byte_offset}",);
         // println!("shift {byte_to_be_inserted:x} offset to byte {i}");
         // (b & ~a) | a
         let inverse_clear_dest_mask = !byte_mask.rotate_left(byte_offset as u32);
         let masked_reg = self.value & inverse_clear_dest_mask;
-        println!(
-            "masked {} = \n{:0>16x}\n{:0>16x} &\n{masked_reg:0>16x}\n",
-            self.name(),
-            self.value,
-            !byte_mask
-        );
+        // println!(
+        //     "masked {} = \n{:0>16x}\n{:0>16x} &\n{masked_reg:0>16x}\n",
+        //     self.name(),
+        //     self.value,
+        //     !byte_mask
+        // );
         // println!("masked reg {masked_reg:#x}");
 
         self.value = masked_reg | byte_to_be_inserted;
-        println!(
-            "{:0>16} =\n{masked_reg:0>16x} |\n{byte_to_be_inserted:0>16x}",
-            self.value
-        );
+        // println!(
+        //     "{:0>16} =\n{masked_reg:0>16x} |\n{byte_to_be_inserted:0>16x}",
+        //     self.value
+        // );
         // println!("inserted {:x}", self.value);
     }
 
@@ -236,7 +241,7 @@ impl Register {
         let half_to_be_inserted = clean_value << byte_offset;
         let inverse_clear_dest_mask = !byte_mask.rotate_left(byte_offset as u32);
         self.value = (self.value & inverse_clear_dest_mask) | half_to_be_inserted;
-        println!("inserted {:x}", self.value);
+        // println!("inserted {:x}", self.value);
     }
 
     pub fn read_at_byte(&self, i: u8) -> u64 {
@@ -634,10 +639,17 @@ pub struct CPU {
     opcode_table: OpcodeTable,
     pub stack_base: RegisterWidth,
     pub stack_max: RegisterWidth,
+    pub vm_host_bridge: VMHostBridge,
     clock_speed: usize,
+    pub ignore_breakpoints: bool,
+    pub default_breakpoint_behavior: bool,
 }
 impl CPU {
-    pub fn new(clock_speed: usize, display: DisplayMode) -> Result<Self, VMError> {
+    pub fn new(
+        clock_speed: usize,
+        display: DisplayMode,
+        ignore_breakpoints: bool,
+    ) -> Result<Self, VMError> {
         let registers = CPURegisters::new();
         very_very_verbose_println!("registers:\n{registers}");
         let memory = match Memory::new(display) {
@@ -656,7 +668,10 @@ impl CPU {
             opcode_table,
             stack_base: RAM_SIZE,
             stack_max: 0,
+            vm_host_bridge: VMHostBridge::new(),
             clock_speed,
+            ignore_breakpoints,
+            default_breakpoint_behavior: ignore_breakpoints,
         })
     }
 
@@ -766,6 +781,11 @@ impl CPU {
             0x1b => self.op_ret()?,
             0x1c => self.op_cache()?,
             0x1d => self.op_restore()?,
+            0x1e => self.op_fopen()?,
+            0x1f => self.op_fread()?,
+            0x20 => self.op_fwrite()?,
+            0x21 => self.op_fseek()?,
+            0x22 => self.op_fclose()?,
             //special
             0xfe => self.op_breakpoint()?,
 
@@ -788,6 +808,7 @@ impl CPU {
             self.step()?;
             let byte_at_pc = self.read_from_pc()?;
             if byte_at_pc == 0xFF {
+                self.memory.halt_exe_drop();
                 break;
             };
         }
@@ -1012,11 +1033,12 @@ impl DebugTable {
 }
 
 type VMFD = usize;
-struct VMHostBridge {
+pub struct VMHostBridge {
     stdin: Stdin,
     stdout: Stdout,
     stderr: Stderr,
-    open_file_vector: Vec<File>,
+    open_file_vector: HashMap<VMFD, (File, String)>,
+    next_vmfd: usize,
 }
 
 // bridge isa
@@ -1035,48 +1057,245 @@ impl VMHostBridge {
             stdin,
             stdout,
             stderr,
-            open_file_vector: vec![],
+            open_file_vector: HashMap::new(),
+            next_vmfd: 3,
         }
     }
-    fn read_vmfd(&self, vmfd: VMFD) -> Result<Vec<u8>, VMError> {
-        todo!()
+    fn get_file_from_vmfd(&mut self, vmfd: VMFD) -> Result<&mut (File, String), VMError> {
+        let open_files = self.open_file_vector.len();
+        match self.open_file_vector.get_mut(&vmfd) {
+            Some(f) => Ok(f),
+            None => Err(VMError::new(
+                VMErrorCode::VMFileIOError,
+                format!(
+                    "vmfd-{vmfd} does not exist, there are {} open files",
+                    open_files
+                ),
+            )),
+        }
     }
-    fn write_vmfd(&mut self, vmfd: VMFD) -> Result<Vec<u8>, VMError> {
-        todo!()
-    }
-
-    fn fopen(&mut self, file_path: &str) -> Result<VMFD, VMError> {
+    pub fn fopen(&mut self, file_path: &str) -> Result<VMFD, VMError> {
         let file = match File::open(file_path) {
             Ok(file) => file,
             Err(why) => {
                 return Err(VMError::new(
                     VMErrorCode::HostFileIOError,
-                    format!("failed to open host file :: {why}"),
+                    format!("failed to open host file {file_path} :: {why}"),
                 ))
             }
         };
+        let vmfd = self.next_vmfd;
+        self.next_vmfd += 1;
 
-        self.open_file_vector.push(file);
-        let vmfd = (self.open_file_vector.len() - 1) + 3;
+        self.open_file_vector
+            .insert(vmfd, (file, file_path.to_string()));
+
         verbose_println!("opened file {file_path} as vmfd-{vmfd}");
-        todo!()
+        Ok(vmfd)
     }
-    fn fwrite(vmfd: VMFD, bytes: &[u8]) -> Result<(), VMError> {
-        todo!()
+    pub fn fclose(&mut self, vmfd: VMFD) -> Result<(), VMError> {
+        match vmfd {
+            0 => {
+                return Err(VMError::new(
+                    VMErrorCode::VMFileIOError,
+                    format!("cannot close stdin"),
+                ))
+            }
+            1 => {
+                return Err(VMError::new(
+                    VMErrorCode::HostFileIOError,
+                    format!("cannot cloes stdout"),
+                ))
+            }
+            2 => {
+                return Err(VMError::new(
+                    VMErrorCode::HostFileIOError,
+                    format!("cannot close stderr"),
+                ))
+            }
+            _ => {
+                // let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
+                let (file, file_path) = match self.open_file_vector.remove(&vmfd) {
+                    Some(entry) => entry,
+                    None => {
+                        return Err(VMError::new(
+                            VMErrorCode::VMFileIOError,
+                            format!("{vmfd} is not an open file handle"),
+                        ))
+                    }
+                };
+                drop(file);
+                verbose_println!("closed vmfd-{vmfd} :: {file_path}");
+                Ok(())
+            }
+        }
     }
-    fn fread(vmfd: VMFD, length: &[u8]) -> Result<Vec<u8>, VMError> {
-        todo!()
+    pub fn fwrite(&mut self, vmfd: VMFD, buf: &[u8]) -> Result<(), VMError> {
+        match vmfd {
+            0 => {
+                return Err(VMError::new(
+                    VMErrorCode::VMFileIOError,
+                    format!("cannot write to stdin"),
+                ))
+            }
+            1 => match self.stdout.write_all(buf) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    return Err(VMError::new(
+                        VMErrorCode::HostFileIOError,
+                        format!("failed to write to stdout :: {e}"),
+                    ))
+                }
+            },
+            2 => match self.stderr.write_all(buf) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    return Err(VMError::new(
+                        VMErrorCode::HostFileIOError,
+                        format!("failed to write to stderr :: {e}"),
+                    ))
+                }
+            },
+            _ => {
+                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
+                match file.write_all(buf) {
+                    Ok(_) => Ok(()),
+
+                    Err(e) => {
+                        return Err(VMError::new(
+                            VMErrorCode::HostFileIOError,
+                            format!("failed to write to {file_path} :: {e}"),
+                        ))
+                    }
+                }
+            }
+        }
     }
-    fn fseek(vmfd: VMFD, amount: usize) -> Result<(), VMError> {
-        todo!()
+
+    pub fn fread(&mut self, vmfd: VMFD, length: usize) -> Result<Vec<u8>, VMError> {
+        let mut buf: Vec<u8> = vec![0u8; length];
+        match vmfd {
+            0 => match self.stdin.read(&mut buf) {
+                Ok(bytes_read) => (),
+                Err(e) => {
+                    return Err(VMError::new(
+                        VMErrorCode::HostFileIOError,
+                        format!("failed to read from stdin :: {e}"),
+                    ))
+                }
+            },
+            1 => {
+                return Err(VMError::new(
+                    VMErrorCode::VMFileIOError,
+                    format!("cannot read from stdout"),
+                ))
+            }
+            2 => {
+                return Err(VMError::new(
+                    VMErrorCode::VMFileIOError,
+                    format!("cannot read from stderr"),
+                ))
+            }
+            _ => {
+                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
+                match file.read_exact(&mut buf) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        return Err(VMError::new(
+                            VMErrorCode::HostFileIOError,
+                            format!("failed to read from {file_path} :: {e}"),
+                        ))
+                    }
+                }
+            }
+        };
+        Ok(buf)
     }
-    fn exit(code: i32) -> ! {
+
+    pub fn fseek(&mut self, vmfd: VMFD, amount: usize, direction: u8) -> Result<(), VMError> {
+        let offset: i64 = if direction == 1 {
+            amount as i64 * -1
+        } else if direction == 0 {
+            amount as i64
+        } else {
+            return Err(VMError::new(
+                VMErrorCode::HostFileIOError,
+                format!("invalid seek direction"),
+            ));
+        };
+        match vmfd {
+            0 => {
+                return Err(VMError::new(
+                    VMErrorCode::VMFileIOError,
+                    format!("cannot seek stdin"),
+                ))
+            }
+            1 => {
+                return Err(VMError::new(
+                    VMErrorCode::HostFileIOError,
+                    format!("cannot seek stdout"),
+                ))
+            }
+            2 => {
+                return Err(VMError::new(
+                    VMErrorCode::HostFileIOError,
+                    format!("cannot seek stderr"),
+                ))
+            }
+            _ => {
+                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
+                match file.seek_relative(offset) {
+                    Ok(_) => Ok(()),
+
+                    Err(e) => {
+                        return Err(VMError::new(
+                            VMErrorCode::HostFileIOError,
+                            format!("failed to write to {file_path} :: {e}"),
+                        ))
+                    }
+                }
+            }
+        }
+    }
+    pub fn ftell(&mut self, vmfd: VMFD) -> Result<usize, VMError> {
+        match vmfd {
+            0 => {
+                return Err(VMError::new(
+                    VMErrorCode::VMFileIOError,
+                    format!("cannot tell stdin"),
+                ))
+            }
+            1 => {
+                return Err(VMError::new(
+                    VMErrorCode::HostFileIOError,
+                    format!("cannot tell stdout"),
+                ))
+            }
+            2 => {
+                return Err(VMError::new(
+                    VMErrorCode::HostFileIOError,
+                    format!("cannot tell stderr"),
+                ))
+            }
+            _ => {
+                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
+                match file.stream_position() {
+                    Ok(pos) => Ok(pos as usize),
+                    Err(err) => Err(VMError::new(
+                        VMErrorCode::HostFileIOError,
+                        format!("failed to read stream position of vmfd-{vmfd} :: {err}"),
+                    )),
+                }
+            }
+        }
+    }
+    pub fn exit(code: i32) -> ! {
         exit(code)
     }
-    fn sleep(ns: u64) {
+    pub fn sleep(ns: u64) {
         todo!()
     }
-    fn get_system_time() -> usize {
+    pub fn get_system_time() -> usize {
         todo!()
     }
 }

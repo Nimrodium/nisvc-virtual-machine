@@ -1,8 +1,8 @@
 use crate::{
     constant::{RegisterWidth, SHELL_PROMPT, STACK_POINTER},
     cpu::{VMError, VMErrorCode, CPU},
-    verbose_println, very_verbose_println, very_very_verbose_println, INPUT_FLAG, OUTPUT_FLAG,
-    VERBOSE_FLAG,
+    verbose_println, very_verbose_println, very_very_verbose_println, DISASSEMBLE, INPUT_FLAG,
+    OUTPUT_FLAG, VERBOSE_FLAG,
 };
 use rustyline::{history::FileHistory, DefaultEditor, Editor};
 use std::{process::exit, str::Split};
@@ -10,6 +10,7 @@ type ShellArgs<'a> = Split<'a, &'a str>;
 impl CPU {
     pub fn debug_shell(&mut self) -> Result<(), VMError> {
         verbose_println!("dropped into debug shell");
+        self.ignore_breakpoints = true;
         let mut readline = match DefaultEditor::new() {
             Ok(r) => r,
             Err(why) => {
@@ -33,10 +34,11 @@ impl CPU {
                 "exit" => self.sh_exit(),
                 "stop" => self.sh_stop_vm(&mut cmd),
                 "rr" | "read-register" => self.sh_read_register(&mut cmd),
+                "wr" | "write-register" => self.sh_write_register(&mut cmd),
                 "sk" | "stack" => self.sh_stack(&mut cmd),
                 "s" | "step" => self.step(),
                 "logctl" => self.sh_logctl(&mut cmd),
-                "exec" => self.exec(),
+                "exec" | "run" => self.exec(),
                 "rsk" => self.read_stack_from_offset(&mut cmd),
                 _ => Err(VMError::new(
                     VMErrorCode::ShellCommandError,
@@ -78,6 +80,7 @@ impl CPU {
     /// exits shell
     fn sh_exit(&mut self) -> Result<(), VMError> {
         very_verbose_println!("exited shell");
+        self.ignore_breakpoints = self.default_breakpoint_behavior;
         Err(VMError::new(
             VMErrorCode::ShellExit,
             "shell exit invoked".to_string(),
@@ -136,7 +139,7 @@ impl CPU {
                     }
                 }
             },
-            "input" => unsafe {
+            "i" | "input" => unsafe {
                 let on_off = get_next_arg(args, "missing mode on|off")?;
                 match on_off.as_str() {
                     "on" => {
@@ -151,6 +154,25 @@ impl CPU {
                         return Err(VMError::new(
                             VMErrorCode::ShellCommandError,
                             format!("{arg} is not a valid input subcommand"),
+                        ))
+                    }
+                }
+            },
+            "d" | "disassemble" => unsafe {
+                let on_off = get_next_arg(args, "missing mode on|off")?;
+                match on_off.as_str() {
+                    "on" => {
+                        println!("disassembly logging enabled");
+                        DISASSEMBLE = true
+                    }
+                    "off" => {
+                        println!("disassembly logging disabled");
+                        DISASSEMBLE = false
+                    }
+                    _ => {
+                        return Err(VMError::new(
+                            VMErrorCode::ShellCommandError,
+                            format!("{arg} is not a valid disassmble subcommand"),
                         ))
                     }
                 }
@@ -176,6 +198,39 @@ impl CPU {
             }
         };
         let register = self.registers.get_register_via_reverse_lookup(name)?;
+        println!("{register}");
+        Ok(())
+    }
+    fn sh_write_register(&mut self, args: &mut ShellArgs) -> Result<(), VMError> {
+        let name = match args.next() {
+            Some(arg) => arg,
+            None => {
+                return Err(VMError::new(
+                    VMErrorCode::ShellCommandError,
+                    "missing register name".to_string(),
+                ))
+            }
+        };
+        let value_str = match args.next() {
+            Some(arg) => arg,
+            None => {
+                return Err(VMError::new(
+                    VMErrorCode::ShellCommandError,
+                    "missing register name".to_string(),
+                ))
+            }
+        };
+        let value = match usize::from_str_radix(value_str, 10) {
+            Ok(i) => i,
+            Err(e) => {
+                return Err(VMError::new(
+                    VMErrorCode::ShellCommandError,
+                    format!("failed to read value :: {e}"),
+                ))
+            }
+        };
+        let register = self.registers.get_register_via_reverse_lookup(name)?;
+        register.write(value as u64);
         println!("{register}");
         Ok(())
     }

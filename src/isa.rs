@@ -278,16 +278,116 @@ impl CPU {
         }
         Ok(OPCODE_BYTES) // does not take arguments
     }
+
+    // dest_vmfd str_ptr str_len
+    pub fn op_fopen(&mut self) -> Result<usize, VMError> {
+        let bytes_read = REGISTER_BYTES + REGISTER_BYTES + REGISTER_BYTES;
+        let operand_bytes = self.read_operands(bytes_read)?;
+
+        let (str_ptr_name, str_ptr) = self.registers.get_register(operand_bytes[1])?.extract();
+        let (str_len_name, str_len) = self.registers.get_register(operand_bytes[2])?.extract();
+        let dest_vmfd_reg = self.registers.get_mut_register(operand_bytes[0])?;
+        log_disassembly!(
+            "fopen {}, {}, {}",
+            dest_vmfd_reg.name(),
+            str_ptr_name,
+            str_len_name
+        );
+        let file_path = match String::from_utf8(self.memory.read_bytes(str_ptr, str_len as usize)?)
+        {
+            Ok(s) => s,
+            Err(e) => {
+                return Err(VMError::new(
+                    VMErrorCode::VMFileIOError,
+                    format!("vm failed to parse file name :: {e}"),
+                ))
+            }
+        };
+        let vmfd = self.vm_host_bridge.fopen(&file_path)?;
+        Ok(OPCODE_BYTES + bytes_read)
+    }
+    // vmfd buf_ptr buf_len read_len
+    pub fn op_fread(&mut self) -> Result<usize, VMError> {
+        let bytes_read = REGISTER_BYTES + REGISTER_BYTES + REGISTER_BYTES + REGISTER_BYTES;
+        let operand_bytes = self.read_operands(bytes_read)?;
+        let (vmfd_name, vmfd) = self.registers.get_register(operand_bytes[0])?.extract();
+        let (buf_ptr_name, buf_ptr) = self.registers.get_register(operand_bytes[1])?.extract();
+        let (buf_len_name, buf_len) = self.registers.get_register(operand_bytes[2])?.extract();
+        let (read_len_name, read_len) = self.registers.get_register(operand_bytes[3])?.extract();
+        log_disassembly!("fread {vmfd_name}, {buf_ptr_name}, {buf_len_name}, {read_len_name}");
+        let bytes = self
+            .vm_host_bridge
+            .fread(vmfd as usize, read_len as usize)?;
+        self.memory
+            .write_bytes(buf_ptr, &bytes[0..buf_len as usize])?;
+        Ok(OPCODE_BYTES + bytes_read)
+    }
+    // vmfd write_buf write_len
+    pub fn op_fwrite(&mut self) -> Result<usize, VMError> {
+        let bytes_read = REGISTER_BYTES + REGISTER_BYTES + REGISTER_BYTES;
+        let operand_bytes = self.read_operands(bytes_read)?;
+        let (vmfd_name, vmfd) = self.registers.get_register(operand_bytes[0])?.extract();
+        let (write_buf_name, write_buf) = self.registers.get_register(operand_bytes[1])?.extract();
+        let (write_len_name, write_len) = self.registers.get_register(operand_bytes[2])?.extract();
+        log_disassembly!("fwrite {vmfd_name}, {write_buf_name}, {write_len_name}");
+        let bytes = self.memory.read_bytes(write_buf, write_len as usize)?;
+        self.vm_host_bridge.fwrite(vmfd as usize, &bytes)?;
+        Ok(OPCODE_BYTES + bytes_read)
+    }
+    // vmfd seek_bytes direction 0|1
+    pub fn op_fseek(&mut self) -> Result<usize, VMError> {
+        let bytes_read = REGISTER_BYTES + REGISTER_BYTES + REGISTER_BYTES;
+        let operand_bytes = self.read_operands(bytes_read)?;
+        let (vmfd_name, vmfd) = self.registers.get_register(operand_bytes[0])?.extract();
+
+        let (seek_bytes_name, seek_bytes) =
+            self.registers.get_register(operand_bytes[1])?.extract();
+
+        let (direction_name, direction) = self.registers.get_register(operand_bytes[2])?.extract();
+
+        self.vm_host_bridge
+            .fseek(vmfd as usize, seek_bytes as usize, direction as u8)?;
+        log_disassembly!("fseek {vmfd_name}, {seek_bytes_name}, {direction_name}");
+        Ok(OPCODE_BYTES + bytes_read)
+    }
+
+    pub fn op_ftell(&mut self) -> Result<usize, VMError> {
+        let bytes_read = REGISTER_BYTES + REGISTER_BYTES;
+        let operand_bytes = self.read_operands(bytes_read)?;
+        let (vmfd_name, vmfd) = self.registers.get_register(operand_bytes[1])?.extract();
+        let dest_reg = self.registers.get_mut_register(operand_bytes[0])?;
+        log_disassembly!("ftell {}, {vmfd_name}", dest_reg.name());
+        let position = self.vm_host_bridge.ftell(vmfd as usize)?;
+        dest_reg.write(position as u64);
+        Ok(OPCODE_BYTES + bytes_read)
+    }
+    // vmfd
+    pub fn op_fclose(&mut self) -> Result<usize, VMError> {
+        let bytes_read = REGISTER_BYTES;
+        let operand_bytes = self.read_operands(bytes_read)?;
+        let (vmfd_name, vmfd) = self.registers.get_register(operand_bytes[0])?.extract();
+
+        log_disassembly!("fclose {vmfd_name}");
+        self.vm_host_bridge.fclose(vmfd as usize)?;
+        Ok(OPCODE_BYTES + bytes_read)
+    }
+
     // wrapper for debug shell or something idk
     pub fn op_breakpoint(&mut self) -> Result<usize, VMError> {
-        log_disassembly!("breakpoint");
-        match self.debug_shell() {
-            Ok(()) => (),
-            Err(err) => match err.code {
-                VMErrorCode::ShellExit => (),
-                _ => return Err(err),
-            },
-        };
+        if !self.ignore_breakpoints {
+            log_disassembly!("breakpoint");
+            match self.debug_shell() {
+                Ok(()) => (),
+                Err(err) => match err.code {
+                    VMErrorCode::ShellExit => (),
+                    _ => return Err(err),
+                },
+            };
+            self.ignore_breakpoints = false;
+        } else {
+            log_disassembly!("breakpoint ignored");
+        }
+
         Ok(OPCODE_BYTES)
     }
 }

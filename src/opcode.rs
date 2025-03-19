@@ -54,6 +54,11 @@ impl OpcodeTable {
             _Opcode::new(0x1b, "ret"),
             _Opcode::new(0x1c, "cache"),
             _Opcode::new(0x1d, "restore"),
+            _Opcode::new(0x1e, "fopen"),
+            _Opcode::new(0x1f, "fread"),
+            _Opcode::new(0x20, "fwrite"),
+            _Opcode::new(0x21, "fseek"),
+            _Opcode::new(0x22, "fclose"),
             //special
             _Opcode::new(0xfe, "breakpoint"),
         ]);

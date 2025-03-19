@@ -18,7 +18,7 @@ const SCREEN_HEIGHT: u32 = 300;
 const FONT_PATH: &str = "../assets/Glass_TTY_VT220.ttf";
 const FONT_SIZE: u16 = 20;
 use crossterm::{
-    execute,
+    cursor, execute, queue,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use sdl2::{
@@ -372,6 +372,7 @@ impl StdOutDisplay {
                 ))
             }
         };
+        // StdOutDisplay::enable_raw_mode()?;
         Ok(Self {
             stdout: std::io::stdout(),
             key_stack: vec![],
@@ -423,6 +424,25 @@ impl StdOutDisplay {
     }
 }
 
+fn disable_raw_mode() -> Result<(), VMError> {
+    match terminal::disable_raw_mode() {
+        Ok(()) => Ok(()),
+        Err(why) => Err(VMError::new(
+            VMErrorCode::DisplayInitializationError,
+            format!("failed to leave raw terminal mode :: {why}"),
+        )),
+    }
+}
+fn enable_raw_mode() -> Result<(), VMError> {
+    match terminal::enable_raw_mode() {
+        Ok(()) => Ok(()),
+        Err(why) => Err(VMError::new(
+            VMErrorCode::DisplayInitializationError,
+            format!("failed to enter raw terminal mode :: {why}"),
+        )),
+    }
+}
+
 enum DisplayContainer {
     Window(TextModeDisplay),
     StdOut(StdOutDisplay),
@@ -440,6 +460,7 @@ trait DisplayManager {
     fn set_cursor_y(&mut self, y: u32);
     fn cursor_new_line(&mut self);
     fn get_cursor(&mut self) -> (u32, u32);
+    fn halt_exe_drop(&mut self) -> Result<(), VMError>;
 }
 impl DisplayManager for DisplayContainer {
     fn read_event_pump(&mut self) -> u8 {
@@ -514,6 +535,14 @@ impl DisplayManager for DisplayContainer {
             DisplayContainer::StdOut(std_out_display) => std_out_display.get_cursor(),
         }
     }
+
+    fn halt_exe_drop(&mut self) -> Result<(), VMError> {
+        verbose_println!("display switched to program halt mode");
+        match self {
+            DisplayContainer::Window(text_mode_display) => text_mode_display.halt_exe_drop(),
+            DisplayContainer::StdOut(std_out_display) => std_out_display.halt_exe_drop(),
+        }
+    }
 }
 impl DisplayManager for TextModeDisplay {
     fn read_event_pump(&mut self) -> u8 {
@@ -574,6 +603,12 @@ impl DisplayManager for TextModeDisplay {
     fn get_cursor(&mut self) -> (u32, u32) {
         self.cursor.to_tuple()
     }
+
+    fn halt_exe_drop(&mut self) -> Result<(), VMError> {
+        loop {
+            self.key_processor();
+        }
+    }
 }
 impl DisplayManager for StdOutDisplay {
     fn read_event_pump(&mut self) -> u8 {
@@ -605,11 +640,28 @@ impl DisplayManager for StdOutDisplay {
     }
 
     fn write_at_cursor(&mut self, char_ascii: u8) -> Result<(), VMError> {
-        todo!()
+        match queue!(
+            self.stdout,
+            cursor::MoveTo(self.cursor.x as u16, self.cursor.y as u16),
+            crossterm::style::Print(char_ascii as char)
+        ) {
+            Ok(()) => Ok(()),
+            Err(why) => Err(VMError::new(
+                VMErrorCode::GenericError,
+                format!("failed to write character at cursor in stdout :: {why}"),
+            )),
+        }
+        // Ok(())
     }
 
     fn move_cursor(&mut self, direction: Direction) -> Result<(), VMError> {
-        todo!()
+        match direction {
+            Direction::Up => self.cursor.up(),
+            Direction::Down => self.cursor.down(),
+            Direction::Left => self.cursor.left(),
+            Direction::Right => self.cursor.right(),
+        }
+        Ok(())
     }
 
     fn set_cursor_x(&mut self, x: u32) {
@@ -626,6 +678,10 @@ impl DisplayManager for StdOutDisplay {
 
     fn get_cursor(&mut self) -> (u32, u32) {
         self.cursor.to_tuple()
+    }
+
+    fn halt_exe_drop(&mut self) -> Result<(), VMError> {
+        disable_raw_mode()
     }
 }
 pub struct MMIO {
@@ -682,16 +738,15 @@ impl MMIO {
     }
     /// read addr 0x0 summons this function
     /// pops a value off the key_stack, if no values return 0
-    fn read_key_mmio(&mut self) -> u8 {
-        self.display.read_event_pump()
-    }
     // fn write_string(&mut self){
     //     let string =
     // }
-
+    pub fn halt_exe_drop(&mut self) {
+        self.display.halt_exe_drop().unwrap();
+    }
     pub fn mmio_read_handler(&mut self, address: constant::RegisterWidth) -> u8 {
         match address {
-            0x0 => self.read_key_mmio(),
+            0x0 => self.display.read_event_pump(),
             _ => 0,
         }
     }
@@ -706,15 +761,15 @@ impl MMIO {
             // display state control address
             0x1 => match byte {
                 0 => {
-                    self.display.hide_display();
+                    self.display.hide_display()?;
                     very_verbose_println!("mmio call :: hide display")
                 }
                 1 => {
-                    self.display.show_display();
+                    self.display.show_display()?;
                     very_verbose_println!("mmio call :: show display")
                 }
                 2 => {
-                    self.display.refresh_display();
+                    self.display.refresh_display()?;
                     very_verbose_println!("mmio call :: refresh display")
                 }
                 _ => (),
@@ -739,7 +794,8 @@ impl MMIO {
                         }
 
                         _ => {
-                            self.display.write_at_cursor(byte);
+                            self.display.write_at_cursor(byte)?;
+                            self.display.refresh_display()?;
                             let (x, y) = self.display.get_cursor();
                             very_verbose_println!(
                                 "mmio call :: write {byte} to display at ({},{})",

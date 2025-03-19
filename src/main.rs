@@ -40,6 +40,7 @@ fn main() -> Result<(), VMError> {
         FlagArg::new("output", 'o', 0),
         FlagArg::new("clock-speed", 'c', 1),
         FlagArg::new("display", 'D', 1),
+        FlagArg::new("ignore-breakpoints", 'b', 0),
     ];
     let flags = Flags::new(flag_definitions);
     let parsed_args = match arg_parser::ParsedCLIArgs::parse_arguments(&flags, &cli_args) {
@@ -58,8 +59,10 @@ fn main() -> Result<(), VMError> {
     let mut is_shell_instance = false;
     let mut clock_speed_hz = DEFAULT_CLOCK_SPEED;
     let mut display = DisplayMode::Window;
+    let mut ignore_breakpoints = false;
     for arg in parsed_args.flags {
         match arg.name {
+            "ignore-breakpoints" => ignore_breakpoints = true,
             "shell" => is_shell_instance = true,
             "verbose" => unsafe { VERBOSE_FLAG += 1 },
             "disassemble" => unsafe { DISASSEMBLE = true },
@@ -95,7 +98,7 @@ fn main() -> Result<(), VMError> {
             _ => panic!("invalid argument snuck past parser"),
         }
     }
-    let mut vm = cpu::CPU::new(clock_speed_hz, display)?;
+    let mut vm = cpu::CPU::new(clock_speed_hz, display, ignore_breakpoints)?;
 
     vm.load(&file)?;
     if is_shell_instance {
