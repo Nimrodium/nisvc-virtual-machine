@@ -1198,7 +1198,7 @@ impl VMHostBridge {
             }
             _ => {
                 let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
-                match file.read_exact(&mut buf) {
+                match file.read(&mut buf) {
                     Ok(_) => (),
                     Err(e) => {
                         return Err(VMError::new(

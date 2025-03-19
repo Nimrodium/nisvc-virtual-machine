@@ -304,6 +304,7 @@ impl CPU {
             }
         };
         let vmfd = self.vm_host_bridge.fopen(&file_path)?;
+        dest_vmfd_reg.write(vmfd as u64);
         Ok(OPCODE_BYTES + bytes_read)
     }
     // vmfd buf_ptr buf_len read_len
@@ -318,8 +319,12 @@ impl CPU {
         let bytes = self
             .vm_host_bridge
             .fread(vmfd as usize, read_len as usize)?;
-        self.memory
-            .write_bytes(buf_ptr, &bytes[0..buf_len as usize])?;
+        let bytes_trunicated = if bytes.len() > buf_len as usize {
+            &bytes[0..buf_len as usize]
+        } else {
+            &bytes
+        };
+        self.memory.write_bytes(buf_ptr, &bytes_trunicated)?;
         Ok(OPCODE_BYTES + bytes_read)
     }
     // vmfd write_buf write_len

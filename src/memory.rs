@@ -44,7 +44,7 @@ impl Memory {
     /// initializes ram with bytes size as 0xFF
     fn init_ram(bytes: usize) -> Vec<u8> {
         let ram: Vec<u8> = vec![constant::INIT_RAM_VALUE; bytes];
-        println!(
+        verbose_println!(
             "ram initalized as {bytes} bytes ({}KB)",
             bytes as f32 / 1000 as f32
         );
