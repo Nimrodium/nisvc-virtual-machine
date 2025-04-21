@@ -14,8 +14,8 @@ use sdl2::libc::ERA;
 
 use crate::{
     constant::{
-        RegisterCode, RegisterWidth, VMAddress, ADDRESS_BYTES, GPR_COUNT, INIT_VALUE,
-        MMIO_ADDRESS_SPACE, NAME, OPCODE_BYTES, PROGRAM_COUNTER, RAM_SIZE, REAL_STACK_POINTER,
+        RegisterCode, RegisterWidth, VMAddress, ADDRESS_BYTES, FRAME_POINTER, GPR_COUNT,
+        INIT_VALUE, MMIO_ADDRESS_SPACE, NAME, OPCODE_BYTES, PROGRAM_COUNTER, RAM_SIZE,
         REGISTER_BYTES, RNULL, SIGNATURE, STACK_POINTER,
     },
     log_input, log_output,
@@ -411,7 +411,7 @@ impl CPURegisters {
         }
         registers.push(Register::new("pc", PROGRAM_COUNTER));
         registers.push(Register::new("sp", STACK_POINTER));
-        registers.push(Register::new("rsp", REAL_STACK_POINTER));
+        registers.push(Register::new("fp", FRAME_POINTER));
         let mut rnull = Register::new("null", RNULL);
         rnull.write(0);
         rnull.locked = true;
@@ -424,7 +424,7 @@ impl CPURegisters {
             Register::new("null", 0),
             Register::new("pc", 1),
             Register::new("sp", 2),
-            Register::new("rsp", 3),
+            Register::new("fp", 3),
             Register::new("r1", 4),
             Register::new("r2", 5),
             Register::new("r3", 6),
@@ -441,6 +441,8 @@ impl CPURegisters {
             Register::new("r14", 17),
             Register::new("r15", 18),
         ];
+        registers[0].write(0);
+        registers[0].locked = true;
         Self { registers }
     }
     pub fn get_register(&mut self, code: RegisterCode) -> Result<&Register, VMError> {
@@ -537,7 +539,7 @@ impl CPURegisters {
             "b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "q1", "q2", "q3", "q4", "l", "h", "f",
         ];
         let (base_name, window) = match register_name {
-            "null" | "pc" | "sp" | "rsp" => (register_name, "f"),
+            "null" | "pc" | "sp" | "fp" => (register_name, "f"),
 
             _ => (&register_name[..2], {
                 let sub = &register_name[2..];
@@ -643,6 +645,7 @@ pub struct CPU {
     clock_speed: usize,
     pub ignore_breakpoints: bool,
     pub default_breakpoint_behavior: bool,
+    pub entry_point: VMAddress,
 }
 impl CPU {
     pub fn new(
@@ -672,6 +675,7 @@ impl CPU {
             clock_speed,
             ignore_breakpoints,
             default_breakpoint_behavior: ignore_breakpoints,
+            entry_point: 0,
         })
     }
 
@@ -710,6 +714,7 @@ impl CPU {
         self.registers
             .get_mut_register(PROGRAM_COUNTER)?
             .write(nisvc_ef_file.entry_point);
+        self.entry_point = nisvc_ef_file.entry_point;
 
         verbose_println!("{nisvc_ef_file}");
         verbose_println!(

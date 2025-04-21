@@ -1,7 +1,7 @@
 use crate::{
     constant::{
-        RegisterWidth, ADDRESS_BYTES, OPCODE_BYTES, PROGRAM_COUNTER, REAL_STACK_POINTER,
-        REGISTER_BYTES, STACK_POINTER,
+        RegisterWidth, ADDRESS_BYTES, FRAME_POINTER, OPCODE_BYTES, PROGRAM_COUNTER, REGISTER_BYTES,
+        STACK_POINTER,
     },
     cpu::{register_value_from_slice, VMError, VMErrorCode, CPU},
     log_disassembly, log_input, log_output, verbose_println, very_verbose_println,
@@ -233,7 +233,15 @@ impl CPU {
         let return_address = self.registers.get_register(PROGRAM_COUNTER)?.read()
             + OPCODE_BYTES as RegisterWidth
             + bytes_read as RegisterWidth;
+
+        let fp_old = self.registers.get_register(FRAME_POINTER)?.read();
+        self.push(fp_old)?;
         self.push(return_address)?;
+
+        // save the frame pointer
+        let sp = self.registers.get_register(STACK_POINTER)?.read();
+        self.registers.get_mut_register(FRAME_POINTER)?.write(sp);
+
         self.registers
             .get_mut_register(PROGRAM_COUNTER)?
             .write(subroutine_address);
@@ -243,39 +251,43 @@ impl CPU {
     }
     pub fn op_ret(&mut self) -> Result<usize, VMError> {
         let return_address = self.pop()?;
+        let old_fp = self.pop()?;
         self.registers
             .get_mut_register(PROGRAM_COUNTER)?
             .write(return_address);
+        self.registers
+            .get_mut_register(FRAME_POINTER)?
+            .write(old_fp);
         log_disassembly!("ret ${return_address}");
         Ok(0)
     }
     pub fn op_cache(&mut self) -> Result<usize, VMError> {
         let imm_size = register_value_from_slice(&self.read_operands(1)?) as usize;
         let x = register_value_from_slice(&self.read_operands(1 + imm_size)?[1..]);
-        log_disassembly!("cache ${x}");
-        let fake_sp = self.registers.get_register(STACK_POINTER)?.read();
-        for register_code in 1..=x {
-            let register_value = self.registers.get_register(register_code as u8)?.read();
-            self.push(register_value)?;
-        }
-        let real_sp = self.registers.get_register(STACK_POINTER)?.read();
-        self.registers
-            .get_mut_register(REAL_STACK_POINTER)?
-            .write(real_sp);
-        self.registers
-            .get_mut_register(STACK_POINTER)?
-            .write(fake_sp);
+        log_disassembly!("cache ${x} :: DEPRECATED");
+        // let fake_sp = self.registers.get_register(STACK_POINTER)?.read();
+        // for register_code in 1..=x {
+        //     let register_value = self.registers.get_register(register_code as u8)?.read();
+        //     self.push(register_value)?;
+        // }
+        // let real_sp = self.registers.get_register(STACK_POINTER)?.read();
+        // self.registers
+        //     .get_mut_register(FRAME_POINTER)?
+        //     .write(real_sp);
+        // self.registers
+        //     .get_mut_register(STACK_POINTER)?
+        //     .write(fake_sp);
 
         Ok(OPCODE_BYTES + 1 + imm_size)
     }
     pub fn op_restore(&mut self) -> Result<usize, VMError> {
         let x = self.pop()?;
-        log_disassembly!("restore (${x})");
-        for register_code in x..=1 {
-            let restored_value = self.pop()?;
-            let register = self.registers.get_mut_register(register_code as u8)?;
-            register.write(restored_value);
-        }
+        log_disassembly!("restore (${x}) :: DEPRECATED");
+        // for register_code in x..=1 {
+        //     let restored_value = self.pop()?;
+        //     let register = self.registers.get_mut_register(register_code as u8)?;
+        //     register.write(restored_value);
+        // }
         Ok(OPCODE_BYTES) // does not take arguments
     }
 

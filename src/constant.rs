@@ -32,7 +32,7 @@ pub const GPR_START: u8 = 4;
 pub const GPR_END: u8 = GPR_START + GPR_COUNT;
 pub const PROGRAM_COUNTER: u8 = RNULL + 1;
 pub const STACK_POINTER: u8 = PROGRAM_COUNTER + 1;
-pub const REAL_STACK_POINTER: u8 = STACK_POINTER + 1;
+pub const FRAME_POINTER: u8 = STACK_POINTER + 1;
 pub const RNULL: u8 = 0;
 
 // pub const CLOCK_SPEED_MS: usize = 1 / CLOCK_SPEED_HZ * 1000; //milliseconds between clock cycle

@@ -1,5 +1,5 @@
 use crate::{
-    constant::{RegisterWidth, SHELL_PROMPT, STACK_POINTER},
+    constant::{RegisterWidth, PROGRAM_COUNTER, SHELL_PROMPT, STACK_POINTER},
     cpu::{VMError, VMErrorCode, CPU},
     verbose_println, very_verbose_println, very_very_verbose_println, DISASSEMBLE, INPUT_FLAG,
     OUTPUT_FLAG, VERBOSE_FLAG,
@@ -40,6 +40,7 @@ impl CPU {
                 "logctl" => self.sh_logctl(&mut cmd),
                 "exec" | "run" => self.exec(),
                 "rsk" => self.read_stack_from_offset(&mut cmd),
+                "reset" => self.sh_reset(),
                 _ => Err(VMError::new(
                     VMErrorCode::ShellCommandError,
                     format!("unrecognized command {command_name}"),
@@ -92,6 +93,13 @@ impl CPU {
         exit(0);
     }
 
+    fn sh_reset(&mut self) -> Result<(), VMError> {
+        self.registers
+            .get_mut_register(PROGRAM_COUNTER)?
+            .write(self.entry_point);
+        println!("pc set to ${}", self.entry_point);
+        Ok(())
+    }
     fn sh_logctl(&mut self, args: &mut ShellArgs) -> Result<(), VMError> {
         // let level = match args.next() {
         //     Some(arg) => arg,
