@@ -1,218 +1,77 @@
-use crate::{
-    _very_verbose_println,
-    constant::{self, RegisterWidth},
-    cpu::{VMError, VMErrorCode},
-    mmio, verbose_println, very_verbose_println, very_very_verbose_println, DisplayMode,
-};
-
-// memory.rs
-// memory interaction
-pub type Bytes = Vec<u8>;
-// pub struct NewMemory<'a> {
-//     pub program: Bytes,
-//     pub ram: Bytes,
-//     pub mmio_base: RegisterWidth,
-//     pub program_base: RegisterWidth,
-//     // pub rom_exec_base: u64,
-//     pub ram_base: RegisterWidth,
-//     pub stack: Vec<RegisterWidth>,
-//     mmio: mmio::MMIO<'a>,
-// }
-// impl NewMemory {
-//     fn init_ram(bytes: usize) -> Vec<u8> {
-//         let ram: Vec<u8> = vec![constant::INIT_RAM_VALUE; bytes];
-//         verbose_println!(
-//             "ram initalized as {bytes} bytes ({}KB)",
-//             bytes as f32 / 1000 as f32
-//         );
-//         ram
-//     }
-// }
-
+use crate::{constant::UNINITIALIZED_MEMORY, ExecutionError};
 pub struct Memory {
-    pub program: Bytes,
-    pub ram: Bytes,
-    pub mmio_base: RegisterWidth,
-    pub program_base: RegisterWidth,
-    // pub rom_exec_base: u64,
-    pub ram_base: RegisterWidth,
-    pub stack: Vec<RegisterWidth>,
-    mmio: mmio::MMIO,
+    physical: Vec<u8>,
+    max: usize,
 }
-// [MMIO][PROGRAM][DATARAM]
+
 impl Memory {
-    /// initializes ram with bytes size as 0xFF
-    fn init_ram(bytes: usize) -> Vec<u8> {
-        let ram: Vec<u8> = vec![constant::INIT_RAM_VALUE; bytes];
-        verbose_println!(
-            "ram initalized as {bytes} bytes ({}KB)",
-            bytes as f32 / 1000 as f32
-        );
-        ram
-        // vec![]
-    }
-    pub fn new(display: DisplayMode) -> Result<Self, VMError> {
-        verbose_println!("initializing memory...");
-        Ok(Memory {
-            program: vec![],
-            ram: Memory::init_ram(constant::RAM_SIZE as usize),
-            mmio_base: 0, // always zero unless i put something under mmio
-            program_base: constant::MMIO_ADDRESS_SPACE as RegisterWidth, // change this when i actually add an mmio system
-            ram_base: constant::MMIO_ADDRESS_SPACE as RegisterWidth,
-            stack: vec![], // start of ram aka rom.len()-1
-            mmio: mmio::MMIO::new(display)?,
-        })
-    }
-    pub fn halt_exe_drop(&mut self) {
-        self.mmio.halt_exe_drop();
-    }
-
-    /// return a slice of bytes starting address and extending for bytes
-    pub fn read_bytes(&mut self, address: RegisterWidth, bytes: usize) -> Result<Vec<u8>, VMError> {
-        let mut byte_buffer: Vec<u8> = Vec::with_capacity(bytes);
-        for n in 0..bytes {
-            let byte_address = address + n as RegisterWidth;
-            let byte = self.mmu_read(byte_address)?;
-            byte_buffer.push(byte);
+    pub fn new(max: usize) -> Self {
+        Self {
+            physical: Vec::with_capacity(max),
+            max,
         }
-        Ok(byte_buffer)
     }
-    /// write a slice of bytes starting at address and extending for length of bytes inputed
-    pub fn write_bytes(&mut self, address: RegisterWidth, bytes: &[u8]) -> Result<(), VMError> {
-        for (n, byte) in bytes.iter().enumerate() {
-            let byte_address = address + n as RegisterWidth;
-            self.mmu_write(byte_address, *byte)?;
+    pub fn load(&mut self, image: Vec<u8>) {
+        let undefined_bytes = self.max - image.len();
+        self.physical.extend(image);
+        self.physical
+            .extend(std::iter::repeat(UNINITIALIZED_MEMORY).take(undefined_bytes));
+    }
+    pub fn read(&self, address: u64) -> Result<u8, ExecutionError> {
+        self.physical
+            .get(address as usize)
+            .ok_or(ExecutionError::new(format!(
+                "Memory Access Violation : address {}|{:#x} out of bounds",
+                address, address
+            )))
+            .map(|v| *v)
+    }
+    pub fn write(&mut self, address: u64, value: u8) -> Result<(), ExecutionError> {
+        if let Some(mem_cell) = self.physical.get_mut(address as usize) {
+            *mem_cell = value;
+        } else {
+            return Err(ExecutionError::new(format!(
+                "Memory Access Violation : address {}|{:#x} out of bounds",
+                address, address
+            )));
         }
         Ok(())
     }
-    pub fn address_from_bytes(address_bytes: Vec<u8>) -> Result<RegisterWidth, VMError> {
-        let address_bytes_arr: [u8; size_of::<RegisterWidth>()] = match address_bytes.try_into() {
-            Ok(arr) => arr,
-            Err(why) => {
-                return Err(VMError {
-                    code: VMErrorCode::GenericError,
-                    reason: format!("error building address from bytes :: {why:?}"),
-                })
-            }
-        };
-        let address = RegisterWidth::from_le_bytes(address_bytes_arr);
-        Ok(address)
-    }
-
-    /// returns byte at address
-    pub fn mmu_read(&mut self, address: RegisterWidth) -> Result<u8, VMError> {
-        // println!("{address} < {}", self.program_base);
-        if address < self.program_base {
-            // mmio address
-            if constant::DEBUG_PRINT {
-                // println!("mmu_read decode {address} -> mmio::{address}")
-                // verbose_println!("reading mmio::${address}");
-            }
-            Ok(self.mmio.mmio_read_handler(address))
-        } else if address < self.ram_base {
-            // rom address
-            let physical_address = address - self.program_base;
-
-            // print!("mmu_read decode {address} -> rom::{physical_address}")
-            // verbose_println!("reading rom::${address}");
-
-            self.read(physical_address, true)
-        } else {
-            // ram address
-            let physical_address = address - self.ram_base;
-            self.read(physical_address, false)
+    fn read_bytes(&self, address: u64, n: u64) -> Result<Vec<u8>, ExecutionError> {
+        let mut buf = Vec::with_capacity(n as usize);
+        for i in address..address + n {
+            buf.push(self.read(i)?);
         }
+        Ok(buf)
     }
-    /// writes byte at address
-    pub fn mmu_write(&mut self, address: RegisterWidth, byte: u8) -> Result<(), VMError> {
-        // println!("{address} < {}", self.program_base);
-        if address < self.program_base {
-            // mmio address
-            // print!("mmu_write decode {address} -> mmio::{address}");
-
-            self.mmio.mmio_write_handler(address, byte)
-        } else if address < self.ram_base {
-            // rom address
-            return Err(VMError {
-                code: VMErrorCode::MemoryAccessViolation,
-                reason: format!("attempted write operation on read-only address {address:#x?}"),
-            });
-        } else {
-            // ram address
-            let physical_address = address - self.ram_base;
-            // print!("mmu_write decode {address} -> ram::{physical_address}");
-
-            self.write(physical_address, byte)
+    fn write_bytes(&mut self, address: u64, bytes: Vec<u8>) -> Result<(), ExecutionError> {
+        for i in 0..bytes.len() as u64 {
+            self.write(address + i, bytes[i as usize])?;
         }
-    }
-
-    pub fn flash_ram(&mut self, ram_image: &[u8]) -> Result<(), VMError> {
-        if ram_image.len() == 0 {
-            very_verbose_println!("no ram image provided");
-        } else {
-            very_verbose_println!("flashing ram image of {} byte(s)...\n", ram_image.len());
-            self.ram.fill(constant::INIT_RAM_VALUE);
-            self.write_bytes(self.ram_base, ram_image)?;
-        };
         Ok(())
     }
-
-    fn read(&self, physical_address: RegisterWidth, is_program: bool) -> Result<u8, VMError> {
-        let byte = if is_program {
-            match self.program.get(physical_address as usize) {
-                Some(b) => b,
-                None => {
-                    return Err(VMError {
-                        code: VMErrorCode::MemoryAccessViolation,
-                        reason: format!(
-                        "attempted read operation on invalid rom address {physical_address:#x?}"
-                    ),
-                    })
-                }
-            }
-        } else {
-            match self.ram.get(physical_address as usize) {
-                Some(b) => b,
-                None => {
-                    return Err(VMError {
-                        code: VMErrorCode::MemoryAccessViolation,
-                        reason: format!(
-                        "attempted read operation on invalid ram address {physical_address:#x?}"
-                    ),
-                    })
-                }
-            }
-        };
-        let name = if is_program { "rom" } else { "ram" };
-        very_very_verbose_println!("reading {name}::${physical_address} -> {byte}");
-        Ok(*byte)
+    pub fn read_immediate(&self, address: u64) -> Result<(u64, u64), ExecutionError> {
+        let size_byte = self.read(address)?;
+        Ok((
+            bytes_to_u64(&self.read_bytes(address + 1, size_byte as u64)?),
+            (size_byte + 1) as u64,
+        ))
     }
-
-    fn write(&mut self, physical_address: RegisterWidth, byte: u8) -> Result<(), VMError> {
-        let byte_reference = match self.ram.get_mut(physical_address as usize) {
-            Some(b) => b,
-            None => {
-                return Err(VMError {
-                    code: VMErrorCode::MemoryAccessViolation,
-                    reason: format!(
-                        "attempted read operation on invalid ram address {physical_address:#x?}"
-                    ),
-                })
-            }
-        };
-        if constant::DEBUG_PRINT {
-            very_very_verbose_println!("${physical_address} <- {byte}");
-        }
-        *byte_reference = byte;
-
-        Ok(())
+    pub fn read_address(&self, address: u64) -> Result<u64, ExecutionError> {
+        Ok(bytes_to_u64(
+            &self.read_bytes(address + 1, size_of::<u64>() as u64)?,
+        ))
     }
+}
 
-    // fn mmio_read_handler(&self, address: RegisterWidth) -> Result<u8, String> {
-    //     // self.mmio.mmio_route(address)
-    //     // Err(format!("mmio not implemented"))
-    // }
-    // fn mmio_write_handler(&mut self, address: RegisterWidth, byte: u8) -> Result<(), String> {
-    //     Err(format!("mmio not implemented"))
-    // }
+fn bytes_to_u64(bytes: &[u8]) -> u64 {
+    let target_len = size_of::<u64>();
+    let mut byte_buf: Vec<u8> = Vec::with_capacity(target_len);
+    byte_buf.extend_from_slice(bytes);
+    byte_buf.resize(target_len, 0);
+    let byte_array: [u8; size_of::<u64>()] = match byte_buf.try_into() {
+        Ok(v) => v,
+        Err(_) => panic!("failed to build usize"),
+    };
+    u64::from_le_bytes(byte_array)
 }
