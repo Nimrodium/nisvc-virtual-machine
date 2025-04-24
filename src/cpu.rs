@@ -4,6 +4,7 @@ use crate::{
     constant::{PROGRAM_COUNTER, UNINITIALIZED_REGISTER},
     log_input, log_output,
     memory::Memory,
+    opcode::Operation,
     verbose_println, very_verbose_println, very_very_verbose_println, ExecutionError,
 };
 
@@ -428,31 +429,45 @@ impl CPURegisters {
     }
 }
 pub struct CPU {
-    registers: CPURegisters,
-    memory: Memory,
+    pub registers: CPURegisters,
+    pub memory: Memory,
 }
 
 impl CPU {
-    fn fetch(&mut self) -> Result<(), ExecutionError> {
-        let mut pc = self.registers.get_register(PROGRAM_COUNTER)?;
-        let opcode = pc.read();
-        Ok(())
+    fn new(mem_b: u64) -> Self {
+        Self {
+            registers: CPURegisters::new(),
+            memory: Memory::new(mem_b),
+        }
     }
-    fn decode(&mut self, encoding: &[Kind]) -> Result<DecodedInstruction, ExecutionError> {
+    fn fetch(&mut self) -> Result<Operation, ExecutionError> {
+        let pc = self.registers.get_mut_register(PROGRAM_COUNTER)?;
+        let byte = self.memory.read_byte(pc.read())?;
+        pc.write(pc.read() + 1);
+        if let Some(opcode) = Operation::decode(byte) {
+            Ok(opcode)
+        } else {
+            Err(ExecutionError::new(format!(
+                "unrecognized operation {byte:#x}"
+            )))
+        }
+    }
+    fn decode(&mut self, operation: Operation) -> Result<DecodedInstruction, ExecutionError> {
         let mut immutable_registers: Vec<Register> = Vec::new();
         let mut mutable_registers: Vec<u8> = Vec::new();
         let mut addresses: Vec<u64> = Vec::new();
         let mut immediates: Vec<u64> = Vec::new();
         let mut pc = self.registers.get_register(PROGRAM_COUNTER)?.read();
-        for kind in encoding {
+
+        for kind in operation.get_operand_map() {
             match kind {
                 Kind::Register => immutable_registers.push({
-                    let code = self.memory.read(pc)?;
+                    let code = self.memory.read_byte(pc)?;
                     pc += 1;
                     self.registers.get_register(code)?.clone()
                 }),
                 Kind::MutableRegister => mutable_registers.push({
-                    let code = self.memory.read(pc)?;
+                    let code = self.memory.read_byte(pc)?;
                     pc += 1;
                     code
                 }),
@@ -475,6 +490,23 @@ impl CPU {
             addresses,
             immediates,
         })
+    }
+
+    pub fn decode_trinary_register_operation(
+        mut decoded: DecodedInstruction,
+    ) -> (u8, Register, Register) {
+        (
+            decoded.mutable_registers[0],
+            decoded.immutable_registers.remove(0),
+            decoded.immutable_registers.remove(0),
+        )
+    }
+
+    pub fn decode_binay_register_operation(mut decoded: DecodedInstruction) -> (u8, Register) {
+        (
+            decoded.mutable_registers[0],
+            decoded.immutable_registers.remove(0),
+        )
     }
 
     fn execute(&mut self) -> Result<(), ExecutionError> {

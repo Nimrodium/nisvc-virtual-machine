@@ -1,6 +1,7 @@
 // nisvc virtual machine rewrite
 #![allow(static_mut_refs)]
 
+mod bridge;
 mod constant;
 mod cpu;
 mod instruction_set;

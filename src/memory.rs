@@ -41,7 +41,7 @@ impl Memory {
         // stack
         Ok(())
     }
-    pub fn read(&self, address: u64) -> Result<u8, ExecutionError> {
+    pub fn read_byte(&self, address: u64) -> Result<u8, ExecutionError> {
         self.physical
             .get(address as usize)
             .ok_or(ExecutionError::new(format!(
@@ -50,7 +50,7 @@ impl Memory {
             )))
             .map(|v| *v)
     }
-    pub fn write(&mut self, address: u64, value: u8) -> Result<(), ExecutionError> {
+    pub fn write_byte(&mut self, address: u64, value: u8) -> Result<(), ExecutionError> {
         if let Some(mem_cell) = self.physical.get_mut(address as usize) {
             *mem_cell = value;
         } else {
@@ -61,32 +61,43 @@ impl Memory {
         }
         Ok(())
     }
-    fn read_bytes(&self, address: u64, n: u64) -> Result<Vec<u8>, ExecutionError> {
+    fn read(&self, address: u64, n: u64) -> Result<Vec<u8>, ExecutionError> {
         let mut buf = Vec::with_capacity(n as usize);
         for i in address..address + n {
-            buf.push(self.read(i)?);
+            buf.push(self.read_byte(i)?);
         }
         Ok(buf)
     }
-    fn write_bytes(&mut self, address: u64, bytes: &[u8]) -> Result<(), ExecutionError> {
+    fn write(&mut self, address: u64, bytes: &[u8]) -> Result<u64, ExecutionError> {
+        let mut bytes_wrote = 0;
         for i in 0..bytes.len() as u64 {
-            self.write(address + i, bytes[i as usize])?;
+            self.write_byte(address + i, bytes[i as usize])?;
+            bytes_wrote += 1;
         }
-        Ok(())
+        Ok(bytes_wrote)
     }
     pub fn read_immediate(&self, address: u64) -> Result<(u64, u64), ExecutionError> {
-        let size_byte = self.read(address)?;
+        let size_byte = self.read_byte(address)?;
         Ok((
-            bytes_to_u64(&self.read_bytes(address + 1, size_byte as u64)?),
+            bytes_to_u64(&self.read(address + 1, size_byte as u64)?),
             (size_byte + 1) as u64,
         ))
     }
     pub fn read_address(&self, address: u64) -> Result<u64, ExecutionError> {
-        Ok(bytes_to_u64(
-            &self.read_bytes(address + 1, size_of::<u64>() as u64)?,
-        ))
+        Ok(bytes_to_u64(&self.read(address, size_of::<u64>() as u64)?))
     }
-
+    // returns stack pointer
+    pub fn push(&mut self, stack_ptr: u64, value: u64) -> Result<u64, ExecutionError> {
+        let bytes_wrote = self.write(stack_ptr, &value.to_le_bytes())?;
+        Ok(stack_ptr + bytes_wrote)
+    }
+    // returns stack pointer and popped value
+    pub fn pop(&mut self, stack_ptr: u64) -> Result<(u64, u64), ExecutionError> {
+        let value_size = size_of::<u64>() as u64;
+        let ptr = stack_ptr - value_size;
+        let value = bytes_to_u64(&self.read(ptr, value_size)?);
+        Ok((ptr, value))
+    }
     /*
 
     heap allocation operates using a linked list of booleans (free/occupied) heap regions
@@ -113,8 +124,21 @@ impl Memory {
         let (next_is_allocated, next_next) = self.hpa_read_hpa_node(current_next_ptr)?;
         let (_, next_next_next) = self.hpa_read_hpa_node(next_next)?;
         let current_size = hpa_block_size(ptr, current_next_ptr);
+        if current_size == new_size {
+            // nop
+            return Ok(ptr);
+        }
         if new_size < current_size {
-            // create new block in deallocated space
+            // moves next ptr down, if next block is allocated then link new_ptr to the old_next, else link to allocated
+            let shrink_size = current_size - new_size;
+            let new_ptr = ptr + shrink_size;
+            let new_ptr_link = if next_is_allocated {
+                current_next_ptr
+            } else {
+                next_next
+            };
+            self.hpa_write_hpa_node(new_ptr, new_ptr_link, false)?;
+
             todo!("shrinking realloc")
         } else {
             if !next_is_allocated && hpa_block_size(next_next, next_next_next) >= new_size {
@@ -132,7 +156,17 @@ impl Memory {
             }
         }
     }
-
+    // fn hpa_realloc_mv(
+    //     &mut self,
+    //     ptr: u64,
+    //     current_size: u64,
+    //     new_size: u64,
+    // ) -> Result<u64, ExecutionError> {
+    //     let new_ptr = self.malloc(new_size)?;
+    //     self.memcpy(new_ptr, ptr, current_size)?;
+    //     self.hpa_write_hpa_node_allocation_status(ptr, false)?;
+    //     Ok::<u64, ExecutionError>(new_ptr)
+    // }
     pub fn free(&mut self, ptr: u64, size: u64) -> Result<(), ExecutionError> {
         self.total_heap_allocations -= 1;
         self.hpa_write_hpa_node_allocation_status(ptr, false)?;
@@ -141,10 +175,19 @@ impl Memory {
     }
 
     pub fn memcpy(&mut self, dest: u64, src: u64, n: u64) -> Result<(), ExecutionError> {
-        todo!()
+        for ptr in 0..n {
+            let src_ptr = src + ptr;
+            let dest_ptr = dest + ptr;
+            let src_byte = self.read_byte(src_ptr)?;
+            self.write_byte(dest_ptr, src_byte)?;
+        }
+        Ok(())
     }
     pub fn memset(&mut self, dest: u64, value: u8, n: u64) -> Result<(), ExecutionError> {
-        todo!()
+        for ptr in dest..dest + n {
+            self.write_byte(ptr, value)?;
+        }
+        Ok(())
     }
     // /// attempts to resolve a potential oom error by defragmenting and then reattempting to search for an allocation canditate, returns an OOM error if it fails a second time
     // fn hpa_oom_recover(&mut self,size:u6) -> Result<(),ExecutionError>{
@@ -172,23 +215,23 @@ impl Memory {
         &mut self,
         size: u64,
     ) -> Result<Option<u64>, ExecutionError> {
-        let mut next = self.hpa_head_ptr;
+        let mut ptr = self.hpa_head_ptr;
         let mut canditate: Option<u64> = None;
         loop {
-            let (current_is_allocated, current_next) = self.hpa_read_hpa_node(next)?;
+            let (current_is_allocated, current_next) = self.hpa_read_hpa_node(ptr)?;
             if current_next == HPA_TAIL_SENTINEL_ADDRESS {
                 break;
             }
             if current_is_allocated {
-                next = current_next;
+                ptr = current_next;
                 continue;
             }
-            let canditate_size = (current_next - HPA_NODE_DATA_OFFSET) - next;
-            let former_canditate_size = if let Some(n) = canditate { n } else { 0 };
+            let canditate_size = (current_next - HPA_NODE_DATA_OFFSET) - ptr;
+            let former_canditate_size = if let Some(n) = canditate { n } else { u64::MAX };
             if canditate_size >= size && canditate_size < former_canditate_size {
                 canditate = Some(current_next)
             }
-            next = current_next
+            ptr = current_next
         }
         Ok(canditate)
     }
@@ -198,7 +241,7 @@ impl Memory {
         let next_ptr = is_allocated_ptr + 1;
         // let next_ptr = ptr - HPA_NODE_DATA_OFFSET - 1;
 
-        let is_allocated : bool = match self.read(is_allocated_ptr)? {
+        let is_allocated : bool = match self.read_byte(is_allocated_ptr)? {
             0 => false,
             1 => true,
             _ => return Err(ExecutionError::new(format!(
@@ -219,8 +262,8 @@ impl Memory {
         let is_allocated_ptr = ptr - HPA_NODE_DATA_OFFSET;
         let next_ptr = is_allocated_ptr + 1;
 
-        self.write(is_allocated_ptr, is_allocated as u8)?;
-        self.write_bytes(next_ptr, &next.to_le_bytes())?;
+        self.write_byte(is_allocated_ptr, is_allocated as u8)?;
+        self.write(next_ptr, &next.to_le_bytes())?;
         Ok(())
     }
     fn hpa_write_hpa_node_allocation_status(
@@ -229,13 +272,10 @@ impl Memory {
         is_allocated: bool,
     ) -> Result<(), ExecutionError> {
         let is_allocated_ptr = ptr - HPA_NODE_DATA_OFFSET;
-        self.write(is_allocated_ptr, is_allocated as u8)?;
+        self.write_byte(is_allocated_ptr, is_allocated as u8)?;
         Ok(())
     }
 
-    fn hpa_read_next_hpa_node(&self, ptr: u64) -> Result<(bool, u64), ExecutionError> {
-        self.hpa_read_hpa_node(self.hpa_read_hpa_node(ptr)?.1)
-    }
     /// defragments heap allocator block linked list
     /// - `skip_allocated_blocks = false`   | performs a local defragmentation
     /// - `skip_allocated_blocks = true`    | performs a global defragmentation (best if performed at the head)

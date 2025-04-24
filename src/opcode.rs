@@ -38,6 +38,24 @@ pub enum Operation {
     Fwrite,
     Fseek,
     Fclose,
+    //new
+
+    //heap management
+    Malloc,
+    Realloc,
+    Free,
+    Memcpy,
+    Memset,
+
+    // floating point
+    Itof,
+    Ftoi,
+
+    Fadd,
+    Fsub,
+    Fmul,
+    Fdiv,
+    Fmod,
 
     Breakpoint,
     HaltExe,
@@ -78,6 +96,26 @@ impl Operation {
             0x20 => Some(Self::Fwrite),
             0x21 => Some(Self::Fseek),
             0x22 => Some(Self::Fclose),
+
+            // new
+            0x23 => Some(Self::Malloc),
+            0x24 => Some(Self::Realloc),
+            0x25 => Some(Self::Free),
+
+            0x26 => Some(Self::Memset),
+            0x27 => Some(Self::Memcpy),
+
+            0x28 => Some(Self::Itof),
+            0x29 => Some(Self::Ftoi),
+            0x2a => Some(Self::Fadd),
+            0x2b => Some(Self::Fsub),
+            0x2c => Some(Self::Fmul),
+            0x2d => Some(Self::Fdiv),
+
+            // 0x23 => Some(Self::Fadd),
+            // 0x24 => Some(Self::Fsub),
+            // 0x25 => Some(Self::Fmul),
+            // 0x26 => Some(Self::Fdiv),
             0xfe => Some(Self::Breakpoint),
             0xff => Some(Self::HaltExe),
             _ => None,
