@@ -436,7 +436,6 @@ impl CPU {
     fn fetch(&mut self) -> Result<(), ExecutionError> {
         let mut pc = self.registers.get_register(PROGRAM_COUNTER)?;
         let opcode = pc.read();
-
         Ok(())
     }
     fn decode(&mut self, encoding: &[Kind]) -> Result<DecodedInstruction, ExecutionError> {
