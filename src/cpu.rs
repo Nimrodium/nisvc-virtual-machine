@@ -1,7 +1,13 @@
 use core::fmt;
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{Read, Seek, Stderr, Stdin, Stdout, Write},
+    process::exit,
+};
 
 use crate::{
-    constant::{PROGRAM_COUNTER, UNINITIALIZED_REGISTER},
+    constant::{PROGRAM_COUNTER, STACK_POINTER, UNINITIALIZED_REGISTER},
     log_input, log_output,
     memory::Memory,
     opcode::Operation,
@@ -428,9 +434,142 @@ impl CPURegisters {
         }
     }
 }
+
+union RegisterUnion {
+    full: u64,
+    half: [u32; 2],
+    quarter: [u16; 4],
+    byte: [u8; 8],
+}
+
+// reimplemented
+struct _Register {
+    base_name: String,
+    internal: RegisterUnion,
+    window: SubRegisterWindow,
+    immutable: bool,
+}
+impl _Register {
+    fn new(name: &str) -> Self {
+        Self {
+            base_name: name.to_string(),
+            internal: RegisterUnion {
+                full: UNINITIALIZED_REGISTER,
+            },
+            window: SubRegisterWindow::F,
+            immutable: false,
+        }
+    }
+
+    pub fn write(&mut self, value: u64) {
+        if !self.immutable {
+            match self.window {
+                SubRegisterWindow::B1 => unsafe { self.internal.byte[0] = value as u8 },
+                SubRegisterWindow::B2 => unsafe { self.internal.byte[1] = value as u8 },
+                SubRegisterWindow::B3 => unsafe { self.internal.byte[2] = value as u8 },
+                SubRegisterWindow::B4 => unsafe { self.internal.byte[3] = value as u8 },
+                SubRegisterWindow::B5 => unsafe { self.internal.byte[4] = value as u8 },
+                SubRegisterWindow::B6 => unsafe { self.internal.byte[5] = value as u8 },
+                SubRegisterWindow::B7 => unsafe { self.internal.byte[6] = value as u8 },
+                SubRegisterWindow::B8 => unsafe { self.internal.byte[7] = value as u8 },
+                SubRegisterWindow::Q1 => unsafe { self.internal.quarter[0] = value as u16 },
+                SubRegisterWindow::Q2 => unsafe { self.internal.quarter[1] = value as u16 },
+                SubRegisterWindow::Q3 => unsafe { self.internal.quarter[2] = value as u16 },
+                SubRegisterWindow::Q4 => unsafe { self.internal.quarter[3] = value as u16 },
+                SubRegisterWindow::L => unsafe { self.internal.half[0] = value as u32 },
+                SubRegisterWindow::H => unsafe { self.internal.half[1] = value as u32 },
+                SubRegisterWindow::F => self.internal.full = value,
+            }
+        }
+    }
+    pub fn read(&self) -> u64 {
+        match self.window {
+            SubRegisterWindow::B1 => unsafe { self.internal.byte[0] as u64 },
+            SubRegisterWindow::B2 => unsafe { self.internal.byte[1] as u64 },
+            SubRegisterWindow::B3 => unsafe { self.internal.byte[2] as u64 },
+            SubRegisterWindow::B4 => unsafe { self.internal.byte[3] as u64 },
+            SubRegisterWindow::B5 => unsafe { self.internal.byte[4] as u64 },
+            SubRegisterWindow::B6 => unsafe { self.internal.byte[5] as u64 },
+            SubRegisterWindow::B7 => unsafe { self.internal.byte[6] as u64 },
+            SubRegisterWindow::B8 => unsafe { self.internal.byte[7] as u64 },
+            SubRegisterWindow::Q1 => unsafe { self.internal.quarter[0] as u64 },
+            SubRegisterWindow::Q2 => unsafe { self.internal.quarter[1] as u64 },
+            SubRegisterWindow::Q3 => unsafe { self.internal.quarter[2] as u64 },
+            SubRegisterWindow::Q4 => unsafe { self.internal.quarter[3] as u64 },
+            SubRegisterWindow::L => unsafe { self.internal.half[0] as u64 },
+            SubRegisterWindow::H => unsafe { self.internal.half[1] as u64 },
+            SubRegisterWindow::F => unsafe { self.internal.full },
+        }
+    }
+    fn as_window_mut(&mut self, window: SubRegisterWindow) -> &mut Self {
+        self.window = window;
+        self
+    }
+    fn as_window(&mut self, window: SubRegisterWindow) -> &Self {
+        self.window = window;
+        self
+    }
+}
+
+pub struct _CPURegisters {
+    registers: [_Register; 16],
+}
+impl _CPURegisters {
+    fn new() -> Self {
+        let mut registers = [
+            _Register::new("null"),
+            _Register::new("pc"),
+            _Register::new("sp"),
+            _Register::new("fp"),
+            _Register::new("r1"),
+            _Register::new("r2"),
+            _Register::new("r3"),
+            _Register::new("r4"),
+            _Register::new("r5"),
+            _Register::new("r6"),
+            _Register::new("r7"),
+            _Register::new("r8"),
+            _Register::new("r9"),
+            _Register::new("r10"),
+            _Register::new("r11"),
+            _Register::new("r12"),
+        ];
+        registers[0].write(0);
+        registers[0].immutable = true;
+        Self { registers }
+    }
+    pub fn get_register(&mut self, code: u8) -> &_Register {
+        let base = code & 0x0f;
+        let sub = (code & 0xf0) >> 4;
+        let register = &mut self.registers[base as usize];
+        let window = match sub {
+            0 => SubRegisterWindow::F,
+            1 => SubRegisterWindow::B1,
+            2 => SubRegisterWindow::B2,
+            3 => SubRegisterWindow::B3,
+            4 => SubRegisterWindow::B4,
+            5 => SubRegisterWindow::B5,
+            6 => SubRegisterWindow::B6,
+            7 => SubRegisterWindow::B7,
+            8 => SubRegisterWindow::B8,
+            9 => SubRegisterWindow::Q1,
+            10 => SubRegisterWindow::Q2,
+            11 => SubRegisterWindow::Q3,
+            12 => SubRegisterWindow::Q4,
+            13 => SubRegisterWindow::L,
+            14 => SubRegisterWindow::H,
+            15 => SubRegisterWindow::F, // potential to reroute to other register
+            16 => SubRegisterWindow::F, // potential to reroute to other register
+            _ => unreachable!(),
+        };
+        register.as_window(window)
+    }
+}
+
 pub struct CPU {
     pub registers: CPURegisters,
     pub memory: Memory,
+    pub vm_host_bridge: VMHostBridge,
 }
 
 impl CPU {
@@ -438,6 +577,7 @@ impl CPU {
         Self {
             registers: CPURegisters::new(),
             memory: Memory::new(mem_b),
+            vm_host_bridge: VMHostBridge::new(),
         }
     }
     fn fetch(&mut self) -> Result<Operation, ExecutionError> {
@@ -493,12 +633,12 @@ impl CPU {
     }
 
     pub fn decode_trinary_register_operation(
-        mut decoded: DecodedInstruction,
-    ) -> (u8, Register, Register) {
+        decoded: &DecodedInstruction,
+    ) -> (u8, &Register, &Register) {
         (
             decoded.mutable_registers[0],
-            decoded.immutable_registers.remove(0),
-            decoded.immutable_registers.remove(0),
+            &decoded.immutable_registers[0],
+            &decoded.immutable_registers[1],
         )
     }
 
@@ -509,8 +649,59 @@ impl CPU {
         )
     }
 
-    fn execute(&mut self) -> Result<(), ExecutionError> {
-        todo!()
+    fn execute(
+        &mut self,
+        operation: Operation,
+        decoded: DecodedInstruction,
+    ) -> Result<(), ExecutionError> {
+        match operation {
+            Operation::Nop => self.op_nop(decoded),
+            Operation::Cpy => self.op_cpy(decoded),
+            Operation::Ldi => self.op_ldi(decoded),
+            Operation::Load => self.op_load(decoded),
+            Operation::Store => self.op_store(decoded),
+            Operation::Add => self.op_add(decoded),
+            Operation::Sub => self.op_sub(decoded),
+            Operation::Mult => self.op_mult(decoded),
+            Operation::Div => self.op_div(decoded),
+            Operation::Or => self.op_or(decoded),
+            Operation::Xor => self.op_xor(decoded),
+            Operation::And => self.op_and(decoded),
+            Operation::Not => self.op_not(decoded),
+            Operation::Shl => self.op_shl(decoded),
+            Operation::Shr => self.op_shr(decoded),
+            Operation::Rotl => self.op_rotl(decoded),
+            Operation::Rotr => self.op_rotr(decoded),
+            Operation::Neg => self.op_neg(decoded),
+            Operation::Jmp => self.op_jmp(decoded),
+            Operation::Jifz => self.op_jifz(decoded),
+            Operation::Jifnz => self.op_jifnz(decoded),
+            Operation::Inc => self.op_inc(decoded),
+            Operation::Dec => self.op_dec(decoded),
+            Operation::Push => self.op_push(decoded),
+            Operation::Pop => self.op_pop(decoded),
+            Operation::Call => self.op_call(decoded),
+            Operation::Ret => self.op_ret(decoded),
+            Operation::Fopen => self.op_fopen(decoded),
+            Operation::Fread => self.op_fread(decoded),
+            Operation::Fwrite => self.op_fwrite(decoded),
+            Operation::Fseek => self.op_fseek(decoded),
+            Operation::Fclose => self.op_fclose(decoded),
+            Operation::Malloc => self.op_malloc(decoded),
+            Operation::Realloc => self.op_realloc(decoded),
+            Operation::Free => self.op_free(decoded),
+            Operation::Memcpy => self.op_memcpy(decoded),
+            Operation::Memset => self.op_memset(decoded),
+            Operation::Itof => self.op_itof(decoded),
+            Operation::Ftoi => self.op_ftoi(decoded),
+            Operation::Fadd => self.op_fadd(decoded),
+            Operation::Fsub => self.op_fsub(decoded),
+            Operation::Fmult => self.op_fmult(decoded),
+            Operation::Fdiv => self.op_fdiv(decoded),
+            Operation::Breakpoint => self.break_point(),
+            Operation::HaltExe => unreachable!(),
+        }?;
+        Ok(())
     }
 
     pub fn step(&mut self) -> Result<(), ExecutionError> {
@@ -519,6 +710,21 @@ impl CPU {
 
     pub fn exec_loop(&mut self) -> Result<(), ExecutionError> {
         todo!()
+    }
+    fn break_point(&mut self) -> Result<(), ExecutionError> {
+        Ok(())
+    }
+
+    pub fn push(&mut self, value: u64) -> Result<(), ExecutionError> {
+        let sp = self.registers.get_mut_register(STACK_POINTER)?;
+        sp.write(self.memory.push(sp.read(), value)?);
+        Ok(())
+    }
+    pub fn pop(&mut self) -> Result<u64, ExecutionError> {
+        let sp = self.registers.get_mut_register(STACK_POINTER)?;
+        let (new_sp, popped_value) = self.memory.pop(sp.read())?;
+        sp.write(new_sp);
+        Ok(popped_value)
     }
 }
 
@@ -530,14 +736,207 @@ pub enum Kind {
 }
 
 pub struct DecodedInstruction {
-    immutable_registers: Vec<Register>,
-    mutable_registers: Vec<u8>,
+    pub immutable_registers: Vec<Register>,
+    pub mutable_registers: Vec<u8>,
 
-    addresses: Vec<u64>,
-    immediates: Vec<u64>,
+    pub addresses: Vec<u64>,
+    pub immediates: Vec<u64>,
 }
-// impl DecodedInstruction {
-//     fn new(memory:&mut Memory,encoding:&[Kind]) -> Self {
 
-//     }
-// }
+type VMFD = usize;
+pub struct VMHostBridge {
+    stdin: Stdin,
+    stdout: Stdout,
+    stderr: Stderr,
+    open_file_vector: HashMap<VMFD, (File, String)>,
+    next_vmfd: usize,
+}
+
+// bridge isa
+// fopen fd_store filep_ptr filep_len
+// fwrite fd str_ptr str_len
+// fread fd buf_ptr buf_len
+// fclose fd
+
+impl VMHostBridge {
+    fn new() -> Self {
+        // setup stdin & stdout
+        let stdin = std::io::stdin();
+        let stdout = std::io::stdout();
+        let stderr = std::io::stderr();
+        Self {
+            stdin,
+            stdout,
+            stderr,
+            open_file_vector: HashMap::new(),
+            next_vmfd: 3,
+        }
+    }
+    fn get_file_from_vmfd(&mut self, vmfd: VMFD) -> Result<&mut (File, String), ExecutionError> {
+        let open_files = self.open_file_vector.len();
+        match self.open_file_vector.get_mut(&vmfd) {
+            Some(f) => Ok(f),
+            None => Err(ExecutionError::new(format!(
+                "vmfd-{vmfd} does not exist, there are {} open files",
+                open_files
+            ))),
+        }
+    }
+    pub fn fopen(&mut self, file_path: &str) -> Result<VMFD, ExecutionError> {
+        let file = match File::open(file_path) {
+            Ok(file) => file,
+            Err(why) => {
+                return Err(ExecutionError::new(format!(
+                    "failed to open host file {file_path} :: {why}"
+                )))
+            }
+        };
+        let vmfd = self.next_vmfd;
+        self.next_vmfd += 1;
+
+        self.open_file_vector
+            .insert(vmfd, (file, file_path.to_string()));
+
+        verbose_println!("opened file {file_path} as vmfd-{vmfd}");
+        Ok(vmfd)
+    }
+    pub fn fclose(&mut self, vmfd: VMFD) -> Result<(), ExecutionError> {
+        match vmfd {
+            0 => return Err(ExecutionError::new(format!("cannot close stdin"))),
+            1 => return Err(ExecutionError::new(format!("cannot cloes stdout"))),
+            2 => return Err(ExecutionError::new(format!("cannot close stderr"))),
+            _ => {
+                // let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
+                let (file, file_path) = match self.open_file_vector.remove(&vmfd) {
+                    Some(entry) => entry,
+                    None => {
+                        return Err(ExecutionError::new(format!(
+                            "{vmfd} is not an open file handle"
+                        )))
+                    }
+                };
+                drop(file);
+                verbose_println!("closed vmfd-{vmfd} :: {file_path}");
+                Ok(())
+            }
+        }
+    }
+    pub fn fwrite(&mut self, vmfd: VMFD, buf: &[u8]) -> Result<(), ExecutionError> {
+        match vmfd {
+            0 => return Err(ExecutionError::new(format!("cannot write to stdin"))),
+            1 => match self.stdout.write_all(buf) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    return Err(ExecutionError::new(format!(
+                        "failed to write to stdout :: {e}"
+                    )))
+                }
+            },
+            2 => match self.stderr.write_all(buf) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    return Err(ExecutionError::new(format!(
+                        "failed to write to stderr :: {e}"
+                    )))
+                }
+            },
+            _ => {
+                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
+                match file.write_all(buf) {
+                    Ok(_) => Ok(()),
+
+                    Err(e) => {
+                        return Err(ExecutionError::new(format!(
+                            "failed to write to {file_path} :: {e}"
+                        )))
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn fread(&mut self, vmfd: VMFD, length: usize) -> Result<Vec<u8>, ExecutionError> {
+        let mut buf: Vec<u8> = vec![0u8; length];
+        match vmfd {
+            0 => match self.stdin.read(&mut buf) {
+                Ok(bytes_read) => (),
+                Err(e) => {
+                    return Err(ExecutionError::new(format!(
+                        "failed to read from stdin :: {e}"
+                    )))
+                }
+            },
+            1 => return Err(ExecutionError::new(format!("cannot read from stdout"))),
+            2 => return Err(ExecutionError::new(format!("cannot read from stderr"))),
+            _ => {
+                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
+                match file.read(&mut buf) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        return Err(ExecutionError::new(format!(
+                            "failed to read from {file_path} :: {e}"
+                        )))
+                    }
+                }
+            }
+        };
+        Ok(buf)
+    }
+
+    pub fn fseek(
+        &mut self,
+        vmfd: VMFD,
+        amount: usize,
+        direction: u8,
+    ) -> Result<(), ExecutionError> {
+        let offset: i64 = if direction == 1 {
+            amount as i64 * -1
+        } else if direction == 0 {
+            amount as i64
+        } else {
+            return Err(ExecutionError::new(format!("invalid seek direction")));
+        };
+        match vmfd {
+            0 => return Err(ExecutionError::new(format!("cannot seek stdin"))),
+            1 => return Err(ExecutionError::new(format!("cannot seek stdout"))),
+            2 => return Err(ExecutionError::new(format!("cannot seek stderr"))),
+            _ => {
+                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
+                match file.seek_relative(offset) {
+                    Ok(_) => Ok(()),
+
+                    Err(e) => {
+                        return Err(ExecutionError::new(format!(
+                            "failed to write to {file_path} :: {e}"
+                        )))
+                    }
+                }
+            }
+        }
+    }
+    pub fn ftell(&mut self, vmfd: VMFD) -> Result<usize, ExecutionError> {
+        match vmfd {
+            0 => return Err(ExecutionError::new(format!("cannot tell stdin"))),
+            1 => return Err(ExecutionError::new(format!("cannot tell stdout"))),
+            2 => return Err(ExecutionError::new(format!("cannot tell stderr"))),
+            _ => {
+                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
+                match file.stream_position() {
+                    Ok(pos) => Ok(pos as usize),
+                    Err(err) => Err(ExecutionError::new(format!(
+                        "failed to read stream position of vmfd-{vmfd} :: {err}"
+                    ))),
+                }
+            }
+        }
+    }
+    pub fn exit(code: i32) -> ! {
+        exit(code)
+    }
+    pub fn sleep(ns: u64) {
+        todo!()
+    }
+    pub fn get_system_time() -> usize {
+        todo!()
+    }
+}

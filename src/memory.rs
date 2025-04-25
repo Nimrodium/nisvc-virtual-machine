@@ -61,14 +61,14 @@ impl Memory {
         }
         Ok(())
     }
-    fn read(&self, address: u64, n: u64) -> Result<Vec<u8>, ExecutionError> {
+    pub fn read(&self, address: u64, n: u64) -> Result<Vec<u8>, ExecutionError> {
         let mut buf = Vec::with_capacity(n as usize);
         for i in address..address + n {
             buf.push(self.read_byte(i)?);
         }
         Ok(buf)
     }
-    fn write(&mut self, address: u64, bytes: &[u8]) -> Result<u64, ExecutionError> {
+    pub fn write(&mut self, address: u64, bytes: &[u8]) -> Result<u64, ExecutionError> {
         let mut bytes_wrote = 0;
         for i in 0..bytes.len() as u64 {
             self.write_byte(address + i, bytes[i as usize])?;
@@ -196,12 +196,12 @@ impl Memory {
 
     /// returns a pointer to a free memory region that can be allocated into or None if none exists which is big enough
     fn hpa_get_allocation_canditate(&mut self, size: u64) -> Result<u64, ExecutionError> {
-        if let Some(final_canditate) = self._hpa_get_allocation_canditate_internal(size)? {
+        if let Some(final_canditate) = self.hpa_get_allocation_canditate_internal(size)? {
             Ok(final_canditate)
         } else {
             // potential OOM error
             self.hpa_defragment(self.hpa_head_ptr, true)?;
-            if let Some(final_canditate) = self._hpa_get_allocation_canditate_internal(size)? {
+            if let Some(final_canditate) = self.hpa_get_allocation_canditate_internal(size)? {
                 Ok(final_canditate)
             } else {
                 return Err(ExecutionError::new(format!(
@@ -211,7 +211,7 @@ impl Memory {
         }
     }
 
-    fn _hpa_get_allocation_canditate_internal(
+    fn hpa_get_allocation_canditate_internal(
         &mut self,
         size: u64,
     ) -> Result<Option<u64>, ExecutionError> {
@@ -299,7 +299,7 @@ impl Memory {
     }
 }
 
-fn bytes_to_u64(bytes: &[u8]) -> u64 {
+pub fn bytes_to_u64(bytes: &[u8]) -> u64 {
     let target_len = size_of::<u64>();
     let mut byte_buf: Vec<u8> = Vec::with_capacity(target_len);
     byte_buf.extend_from_slice(bytes);
