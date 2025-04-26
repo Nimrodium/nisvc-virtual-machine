@@ -1,3 +1,5 @@
+use std::mem::transmute;
+
 use crate::{constant::UNINITIALIZED_MEMORY, ExecutionError};
 const HPA_NODE_DATA_OFFSET: u64 = 9;
 const HPA_TAIL_SENTINEL_ADDRESS: u64 = 0;
@@ -76,6 +78,7 @@ impl Memory {
         }
         Ok(bytes_wrote)
     }
+    /// (value,bytes_read)
     pub fn read_immediate(&self, address: u64) -> Result<(u64, u64), ExecutionError> {
         let size_byte = self.read_byte(address)?;
         Ok((
@@ -300,15 +303,9 @@ impl Memory {
 }
 
 pub fn bytes_to_u64(bytes: &[u8]) -> u64 {
-    let target_len = size_of::<u64>();
-    let mut byte_buf: Vec<u8> = Vec::with_capacity(target_len);
-    byte_buf.extend_from_slice(bytes);
-    byte_buf.resize(target_len, 0);
-    let byte_array: [u8; size_of::<u64>()] = match byte_buf.try_into() {
-        Ok(v) => v,
-        Err(_) => panic!("failed to build usize"),
-    };
-    u64::from_le_bytes(byte_array)
+    let mut buf: [u8; 8] = [0; 8];
+    buf.copy_from_slice(bytes);
+    u64::from_le_bytes(buf)
 }
 
 fn hpa_block_size(ptr: u64, next_ptr: u64) -> u64 {

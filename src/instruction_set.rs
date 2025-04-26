@@ -1,8 +1,8 @@
-use std::ops::Neg;
+use std::{mem::transmute, ops::Neg};
 
 use crate::{
     constant::{FRAME_POINTER, PROGRAM_COUNTER, STACK_POINTER},
-    cpu::{DecodedInstruction, CPU},
+    cpu::{DecodedInstruction, Register, CPU},
     log_disassembly,
     memory::bytes_to_u64,
     ExecutionError,
@@ -275,6 +275,10 @@ impl CPU {
         dest.write(fd as u64);
         todo!()
     }
+
+    pub fn test(&mut self, reg: &mut Register) {
+        todo!()
+    }
     pub fn op_fread(&mut self, decoded: DecodedInstruction) -> Result<(), ExecutionError> {
         todo!()
     }
@@ -326,6 +330,11 @@ impl CPU {
     pub fn op_fdiv(&mut self, decoded: DecodedInstruction) -> Result<(), ExecutionError> {
         todo!()
     }
-    
-    
+}
+fn f64_as_u64(f: f64) -> u64 {
+    unsafe { transmute(f) }
+}
+
+fn u64_as_f64(u: u64) -> f64 {
+    unsafe { transmute(u) }
 }
