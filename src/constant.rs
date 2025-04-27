@@ -7,3 +7,4 @@ pub const PROGRAM_COUNTER: u8 = 1;
 pub const STACK_POINTER: u8 = 2;
 pub const FRAME_POINTER: u8 = 3;
 pub const SIGNATURE: &[u8] = b"NISVC-EF";
+pub const STACK_SIZE: u64 = 1000;

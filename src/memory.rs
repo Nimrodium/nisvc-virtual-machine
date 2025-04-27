@@ -7,8 +7,8 @@ pub type nisvc_ptr = u64;
 pub struct Memory {
     physical: Vec<u8>,
     max: u64,
-    hpa_head_ptr: u64,
-    stack_start: u64,
+    pub heap_start: u64,
+    pub stack_start: u64,
     total_heap_allocations: u64,
 }
 
@@ -17,7 +17,7 @@ impl Memory {
         Self {
             physical: Vec::with_capacity(max as usize),
             max,
-            hpa_head_ptr: 0,
+            heap_start: 0,
             stack_start: 0,
             total_heap_allocations: 0,
         }
@@ -25,7 +25,7 @@ impl Memory {
     pub fn load(&mut self, image: Vec<u8>, stack_size: u64) -> Result<(), ExecutionError> {
         let img_len = image.len() as u64;
         let undefined_bytes = self.max - img_len;
-        self.hpa_head_ptr = img_len + HPA_NODE_DATA_OFFSET;
+        self.heap_start = img_len + HPA_NODE_DATA_OFFSET;
         self.stack_start = self.max - stack_size;
         if self.stack_start < img_len {
             return Err(ExecutionError::new(format!(
@@ -38,7 +38,7 @@ impl Memory {
             .extend(std::iter::repeat(UNINITIALIZED_MEMORY).take(undefined_bytes as usize));
 
         // setup heap and stack
-        self.hpa_write_hpa_node(self.hpa_head_ptr, self.stack_start, false)?; // heap
+        self.hpa_write_hpa_node(self.heap_start, self.stack_start, false)?; // heap
         self.hpa_write_hpa_node(self.stack_start, HPA_TAIL_SENTINEL_ADDRESS, true)?;
         // stack
         Ok(())
@@ -170,7 +170,7 @@ impl Memory {
     //     self.hpa_write_hpa_node_allocation_status(ptr, false)?;
     //     Ok::<u64, ExecutionError>(new_ptr)
     // }
-    pub fn free(&mut self, ptr: u64, size: u64) -> Result<(), ExecutionError> {
+    pub fn free(&mut self, ptr: u64) -> Result<(), ExecutionError> {
         self.total_heap_allocations -= 1;
         self.hpa_write_hpa_node_allocation_status(ptr, false)?;
         self.hpa_defragment(ptr, false)?;
@@ -203,7 +203,7 @@ impl Memory {
             Ok(final_canditate)
         } else {
             // potential OOM error
-            self.hpa_defragment(self.hpa_head_ptr, true)?;
+            self.hpa_defragment(self.heap_start, true)?;
             if let Some(final_canditate) = self.hpa_get_allocation_canditate_internal(size)? {
                 Ok(final_canditate)
             } else {
@@ -218,7 +218,7 @@ impl Memory {
         &mut self,
         size: u64,
     ) -> Result<Option<u64>, ExecutionError> {
-        let mut ptr = self.hpa_head_ptr;
+        let mut ptr = self.heap_start;
         let mut canditate: Option<u64> = None;
         loop {
             let (current_is_allocated, current_next) = self.hpa_read_hpa_node(ptr)?;

@@ -4,11 +4,11 @@
 mod bridge;
 mod constant;
 mod cpu;
-mod instruction_set;
 mod loader;
 mod memory;
 mod opcode;
 use colorize::AnsiColor;
+use cpu::CPU;
 
 use crate::constant::NAME;
 
@@ -20,6 +20,10 @@ impl ExecutionError {
     fn new(error: String) -> Self {
         Self { error }
     }
+    fn prepend(mut self,prelude:String) -> Self{
+    self.error = prelude + self.error.as_str();
+    self
+    }
 }
 
 static mut GLOBAL_CLOCK: usize = 0;
@@ -28,9 +32,14 @@ static mut DISASSEMBLE: bool = false;
 static mut VERBOSE_FLAG: usize = 0;
 static mut OUTPUT_FLAG: bool = false;
 static mut INPUT_FLAG: bool = false;
+
+
 fn main() {
-    println!("Hello, world!");
+    let mut cpu = CPU::
 }
+
+
+
 fn _log_disassembly(msg: &str) {
     unsafe {
         if DISASSEMBLE {

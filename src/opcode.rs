@@ -202,7 +202,11 @@ pub enum Operation {
         op1: RegHandle,
         op2: RegHandle,
     },
-
+    Mod {
+        dest: RegHandle,
+        op1: RegHandle,
+        op2: RegHandle,
+    },
     Breakpoint,
     HaltExe,
 }
