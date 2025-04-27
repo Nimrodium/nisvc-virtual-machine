@@ -10,6 +10,7 @@ use std::{
 
 pub type RegHandle = u8;
 
+use crossterm::style::Stylize;
 use sdl2::sys::NotUseful;
 
 use crate::{
@@ -261,8 +262,14 @@ impl CPU {
         }
     }
     pub fn load(&mut self, file_path: &str) -> Result<(), ExecutionError> {
-        let mut file = File::open(file_path)
-            .map_err(|e| ExecutionError::new(format!("cannot open file: {e}")))?;
+        let mut file = File::open(file_path).map_err(|e| {
+            ExecutionError::new(format!(
+                "{} {e}",
+                "cannot open file `{file_path}`:"
+                    .on_dark_yellow()
+                    .to_string()
+            ))
+        })?;
         let mut contents: Vec<u8> = Vec::new();
         file.read_to_end(&mut contents)
             .map_err(|e| ExecutionError::new(format!("cannot read file to memory: {e}")))?;

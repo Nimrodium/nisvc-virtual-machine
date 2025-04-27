@@ -7,8 +7,11 @@ mod cpu;
 mod loader;
 mod memory;
 mod opcode;
-use colorize::AnsiColor;
+use std::fmt;
+
+// use colorize::AnsiColor;
 use cpu::CPU;
+use crossterm::style::Stylize;
 
 use crate::constant::NAME;
 
@@ -20,9 +23,15 @@ impl ExecutionError {
     fn new(error: String) -> Self {
         Self { error }
     }
-    fn prepend(mut self,prelude:String) -> Self{
-    self.error = prelude + self.error.as_str();
-    self
+    fn prepend(mut self, prelude: String) -> Self {
+        self.error = prelude + self.error.as_str();
+        self
+    }
+}
+
+impl fmt::Display for ExecutionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", "error >".on_red(), self.error) // make cooler
     }
 }
 
@@ -33,12 +42,13 @@ static mut VERBOSE_FLAG: usize = 0;
 static mut OUTPUT_FLAG: bool = false;
 static mut INPUT_FLAG: bool = false;
 
-
 fn main() {
-    let mut cpu = CPU::
+    let mut cpu = CPU::new(10_000);
+    match cpu.load("placeholder") {
+        Ok(()) => (),
+        Err(e) => println!("{e}"),
+    };
 }
-
-
 
 fn _log_disassembly(msg: &str) {
     unsafe {
