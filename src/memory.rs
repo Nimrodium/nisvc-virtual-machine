@@ -6,41 +6,42 @@ const HPA_TAIL_SENTINEL_ADDRESS: u64 = 0;
 pub type nisvc_ptr = u64;
 pub struct Memory {
     physical: Vec<u8>,
-    max: u64,
+    range: u64,
+    heap_size: u64,
+    stack_size: u64,
     pub heap_start: u64,
     pub stack_start: u64,
     total_heap_allocations: u64,
 }
 
 impl Memory {
-    pub fn new(max: u64) -> Self {
+    pub fn new(heap: u64, stack: u64) -> Self {
         Self {
-            physical: Vec::with_capacity(max as usize),
-            max,
+            physical: Vec::with_capacity((heap + stack) as usize),
+            range: 0,
+            heap_size: heap,
+            stack_size: stack,
             heap_start: 0,
             stack_start: 0,
             total_heap_allocations: 0,
         }
     }
-    pub fn load(&mut self, image: Vec<u8>, stack_size: u64) -> Result<(), ExecutionError> {
-        let img_len = image.len() as u64;
-        let undefined_bytes = self.max - img_len;
-        self.heap_start = img_len + HPA_NODE_DATA_OFFSET;
-        self.stack_start = self.max - stack_size;
-        if self.stack_start < img_len {
-            return Err(ExecutionError::new(format!(
-                "stack allocation overlaps with program allocation by {} bytes",
-                img_len - self.stack_start
-            )));
-        }
+    pub fn load(&mut self, image: Vec<u8>) -> Result<(), ExecutionError> {
+        let image_size = image.len() as u64;
+        self.range = image_size + self.heap_size + self.stack_size;
+        self.physical.reserve(image_size as usize);
         self.physical.extend(image);
-        self.physical
-            .extend(std::iter::repeat(UNINITIALIZED_MEMORY).take(undefined_bytes as usize));
+        self.physical.extend(
+            std::iter::repeat(UNINITIALIZED_MEMORY)
+                .take((self.heap_size + self.stack_size) as usize),
+        );
+        self.heap_start = image_size + HPA_NODE_DATA_OFFSET;
+        self.stack_start = self.heap_start + self.heap_size + HPA_NODE_DATA_OFFSET;
 
         // setup heap and stack
         self.hpa_write_hpa_node(self.heap_start, self.stack_start, false)?; // heap
         self.hpa_write_hpa_node(self.stack_start, HPA_TAIL_SENTINEL_ADDRESS, true)?;
-        // stack
+
         Ok(())
     }
     pub fn read_byte(&self, address: u64) -> Result<u8, ExecutionError> {

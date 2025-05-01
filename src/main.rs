@@ -43,7 +43,7 @@ static mut OUTPUT_FLAG: bool = false;
 static mut INPUT_FLAG: bool = false;
 
 fn main() {
-    let mut cpu = CPU::new(10_000);
+    let mut cpu = CPU::new(10_000, 10_000);
     match cpu.load("placeholder") {
         Ok(()) => (),
         Err(e) => println!("{e}"),

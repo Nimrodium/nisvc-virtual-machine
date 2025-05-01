@@ -11,7 +11,6 @@ use std::{
 pub type RegHandle = u8;
 
 use crossterm::style::Stylize;
-use sdl2::sys::NotUseful;
 
 use crate::{
     constant::{FRAME_POINTER, PROGRAM_COUNTER, STACK_POINTER, STACK_SIZE, UNINITIALIZED_REGISTER},
@@ -184,14 +183,6 @@ impl Register {
             RegWindow::F => unsafe { self.internal.full },
         }
     }
-    // fn as_window_mut(&mut self, window: RegWindow) -> &mut Self {
-    //     self.window = window;
-    //     self
-    // }
-    // fn as_window(&mut self, window: RegWindow) -> &Self {
-    //     self.window = window;
-    //     self
-    // }
 }
 
 pub struct CPURegisters {
@@ -254,10 +245,10 @@ pub struct CPU {
 }
 
 impl CPU {
-    pub fn new(mem_b: u64) -> Self {
+    pub fn new(heap: u64, stack: u64) -> Self {
         Self {
             registers: CPURegisters::new(),
-            memory: Memory::new(mem_b),
+            memory: Memory::new(heap, stack),
             vm_host_bridge: VMHostBridge::new(),
         }
     }
@@ -274,26 +265,13 @@ impl CPU {
         file.read_to_end(&mut contents)
             .map_err(|e| ExecutionError::new(format!("cannot read file to memory: {e}")))?;
         let nisvc_executable_package = NISVCEF::load(contents)?;
-        self.memory
-            .load(nisvc_executable_package.image, STACK_SIZE)?;
+        self.memory.load(nisvc_executable_package.image)?;
         self.registers
             .write(PROGRAM_COUNTER, nisvc_executable_package.entry_point);
         self.registers.write(STACK_POINTER, self.memory.stack_start);
         self.registers.write(FRAME_POINTER, self.memory.stack_start);
         Ok(())
     }
-    // fn fetch(&mut self) -> Result<Operation, ExecutionError> {
-    //     let pc = self.registers.get_mut_register(PROGRAM_COUNTER)?;
-    //     let byte = self.memory.read_byte(pc.read())?;
-    //     pc.write(pc.read() + 1);
-    //     if let Some(opcode) = Operation::decode(byte) {
-    //         Ok(opcode)
-    //     } else {
-    //         Err(ExecutionError::new(format!(
-    //             "unrecognized operation {byte:#x}"
-    //         )))
-    //     }
-    // }
 
     /// advances pc and returns consumed byte
     fn consume_byte(&mut self) -> Result<u8, ExecutionError> {
@@ -604,7 +582,6 @@ impl CPU {
                 );
             }
             Operation::Div { dest, op1, op2 } => {
-                let op1_val = self.registers.read(op1);
                 let op2_val = self.registers.read(op2);
                 if op2_val == 0 {
                     return Err(ExecutionError::new(format!(
@@ -799,7 +776,7 @@ impl CPU {
                 let len = self.registers.read(buf_len);
 
                 let bytes = self.vm_host_bridge.fread(fd_val, len as usize)?;
-                self.memory.write(ptr, &bytes);
+                self.memory.write(ptr, &bytes)?;
 
                 log_disassembly!(
                     "fread {}, {}, {}",
@@ -817,7 +794,7 @@ impl CPU {
                 let ptr = self.registers.read(buf_ptr);
                 let len = self.registers.read(buf_len);
                 let bytes = self.memory.read(ptr, len)?;
-                self.vm_host_bridge.fwrite(fd_val, &bytes);
+                self.vm_host_bridge.fwrite(fd_val, &bytes)?;
                 log_disassembly!(
                     "fwrite {}, {}, {}",
                     self.registers.print(fd),
@@ -834,7 +811,7 @@ impl CPU {
                 let seek_val = self.registers.read(seek);
                 let direction_val = self.registers.read(direction);
                 self.vm_host_bridge
-                    .fseek(fd_val, seek_val as usize, direction_val as u8);
+                    .fseek(fd_val, seek_val as usize, direction_val as u8)?;
 
                 log_disassembly!(
                     "fseek {}, {}, {}",
@@ -894,7 +871,7 @@ impl CPU {
                 let dest_val = self.registers.read(dest);
                 let n_val = self.registers.read(n);
                 let val = self.registers.read(value);
-                self.memory.memset(dest_val, val as u8, n_val);
+                self.memory.memset(dest_val, val as u8, n_val)?;
                 log_disassembly!(
                     "memcpy {}, {}, {}",
                     self.registers.print(dest),
@@ -1036,14 +1013,6 @@ pub enum Kind {
     MutableRegister,
     Immediate,
     Address,
-}
-
-pub struct DecodedInstruction {
-    pub immutable_registers: Vec<Register>,
-    pub mutable_registers: Vec<u8>,
-
-    pub addresses: Vec<u64>,
-    pub immediates: Vec<u64>,
 }
 
 type VMFD = u64;

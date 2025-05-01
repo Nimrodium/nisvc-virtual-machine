@@ -1,102 +1,222 @@
-nop - opcode (0x00) : 1 byte
-	nop
-	Does not perform an operation.
+all instructions will trunecate the value to be written
+ to the least significant bytes if the destination register
+ is smaller than the value being written
 
-Data Moving
-cpy - opcode (0x01) : 3 bytes
-	cpy arx brx
-		Copies value from brx to arx
+if an instruction mutates a register, the mutable register will be
+the first register listed and be marked as (dest)
 
-ldi - opcode (0x02) : 3+<=8 bytes
-ldi rx $
-		Loads immediate $ into rx.
 
-load - opcode (0x03) : 11 bytes
-	load arx brx @rx
-		Loads value starting at memory address @rx and extending for brx	into arx.
+ - *ldi <register(dest)> <constant>*
+ 	loads a constant into dest
+	```asm
+	ldi r1, $1
+	```
+- *cpy <register(dest)> <register(src)>*
+	copies a value from src to dest
+ 	```asm
+	cpy r1,r2
+	```
+- *load <register(dest)> <register(length)> <register(ptr)>*
+ 	reads a value from memory starting from ptr to length into dest
+ 	```asm
+ 	load r1,r2,r3
+	```
+- *store <register(ptr)> <register(length> <register(src)>*
+	writes the value of src to memory starting at ptr
+	and extending for length bytes
+	 ```asm
+	 store r3,r2,r1
+	 ```
 
-store - opcode (0x04) : 11 bytes
-	store @rx arx brx
-	Stores value of brx to @rx writing up to arx
+ ## Arithmetic
+ 	the following operations of this section all adhere to the following signature
+		*<operation> <register(dest)> <register(operand1)> <register(operand2)>*
+		```asm
+		add r3,r1,r2
+		```
+	standard:
+		- *add*
+		- *sub*
+		- *mult*
+		- *div*
+		- *mod*
 
-Arithmetic
-add - opcode (0x05) : 4 bytes
-	add arx brx crx
-		Adds crx to brx and stores result in arx (brx+crx=arx)
+	biwise:
+		- *and*
+		- *or*
+		- *xor*
 
-sub - opcode (0x06) : 4 bytes
-	sub arx brx crx
-		Subtracts crx from brx and stores result in arx (brx-crx=arx)
+	the following operations interpret all registers as floating point
+		- *fadd*
+		- *fsub*
+		- *fmult*
+		- *fdiv*
+		- *fmod*
 
-mult - opcode (0x07) : 4 bytes
+	- *itof <register(dest)> <register(src)>*
+		converts the src integer to the same value in floating point encoding
 
-div - opcode (0x08) : 4 bytes
-	div arx brx crx
-		Divides brx by crx and stores the quotient in arx
+	- *ftoi <register(dest)> <register(src)>*
+			converts the src float to the same value in integer encoding
+			(actually i think this is useless)
 
-Bitwise Arithmetic
-or - opcode (0x09) : 4 bytes
-	or arx brx crx
-		Performs bitwise OR on brx and crx, and stores the result in arx
 
-xor - opcode (0x0a) : 4 bytes
-	xor arx brx crx
-		Performs bitwise xor on brx and crx, and stores the result in arx
+	- *neg <register(dest)> <register(operand)>*
+		negates a value by flipping its most significant bit
+		```asm
+		neg r2,r1
+		```
+	- *not <register(dest) <register(operand)>>*
+		inverts a value by flipping all its bits
+		```asm
+		not r2,r1
+		```
 
-and - opcode (0x0b) : 4 bytes
-	and arx brx crx
-		Performs bitwise and on brx and crx and stores the result in arx
+	- *shl <register(dest)> <register(n)> <register(src)>*
+		shifts src by n bits left
+		```
+		shl r3,r2,r1
+		```
 
-not - opcode (0x0c) : 3 bytes
-	not arx brx
-		Performs bitwise not on brx and stores the result in arx
+	- *shr <register(dest)> <register(n)> <register(src)>*
+		shifts src by n bits right
+		```
+		shr r3,r2,r1
+		```
+	- *rotl <register(dest)> <register(n)> <register(src)>*
+		shifts src by n bits left (wrapping)
+		```
+		shl r3,r2,r1
+		```
 
-shl - opcode (0x0d) : 4 bytes
-	shl arx brx crx
-		Performs bitwise shift on brx by crx places to the left, and stores the result in arx
+	- *rotr <register(dest)> <register(n)> <register(src)>*
+		shifts src by n bits right (wrapping)
+		```
+		shr r3,r2,r1
+		```
 
-shr - opcode (0x0e) : 4 bytes
-	shl arx brx crx
-		Performs bitwise shift on brx by crx places to the right, and stores the result in arx
 
-rotl - opcode (0x0f) : 4 bytes
-	rotl arx brx crx
-		Performs a bitwise rotation of brx by crx places to the left, and stores the result in arx
-rotr - opcode (0x10) : 4 bytes
-	rotr arx brx crx
-		Performs a bitwise rotation of brx by crx places to the right, and stores the result in arx
-neg - opcode (0x11) : 3 bytes
-	neg arx brx
-		Performs a bitwise negation on brx and stores the result in arx
+	- *inc <register(dest/src)>*
+		increments the content of register by 1
+		```asm
+		inc r1
+		```
+	- *dec <register(dest/src)>*
+		decrements the content of register by 1
+		```asm
+		dec r1
+		```
 
-Control Flow
-jmp - opcode (0x12)
-jifz - opcode (0x13)
-jifnz - opcode (0x14)
+## control flow
+	- *jmp <constant>*
+		jumps program to a fixed address
+		```asm
+		jmp $x00aa
+		```
+		equivelent to
+		```
+		ldi r1,$00aa
+		cpy pc,r1
+		```
+	- *jifz <register(condition)> <constant>*
+		jumps to a fixed address if condition is zero
+		```asm
+		# if r1 == r2
+		sub r3b1,r2,r1
+		jifz r3b1,$00aa
+		```
+	- *jifnz <register(condition)> <constant>*
+	 		jumps to a fixed address if condition is not zero
+	 		```asm
+	 		# if r1 != r2
+	 		sub r3b1,r2,r1
+	 		jifnz r3b1,$00aa
+	 		```
+	- *haltexe*
+		immediately stop program execution
+## stack
+	the stack is 64bit aligned, any value will be stored
+	 as 64 bits regardless of register source size
 
-–
 
-inc - opcode (0x16)
-dec - opcode (0x17)
+	- *push <register(src)>*
+		pushes src to the stack
+		```asm
+		push r1
+		```
 
-Stack
-push - opcode (0x18)
-pop - opcode (0x19)
+	- *pop <register(dest)>*
+		pops a value from the stack into dest
+		```asm
+		pop r2
+		```
 
-Subroutine calling and returning
-call - opcode (0x1a)
-ret - opcode (0x1b)
-Host File IO
-fopen - opcode (0x1e)
-fread - opcode (0x1f)
-fwrite - opcode (0x20)
-fseek - opcode (0x21)
-fclose - opcode (0x22)
-Special
-breakpoint - opcode (0xfe) : 1 byte
-	breakpoint
-		Drops into debug shell unless breakpoints are set to ignored
+## heap
+	- *malloc <register(dest)> <register(size)>*
+		allocates a block of the heap of size and returns a pointer in dest
+		```asm
+		malloc r1,r2
+		```
+	- *realloc <register(dest)> <register(ptr)> <register(size)>*
+		reallocates ptr to size and returns the new pointer (or same pointer if it expanded)
+		```asm
+		realloc r1,r1,r2
+		```
+	- *free <register(ptr)>*
+		deallocates ptr
+		```asm
+		free r1
+		```
+	- *memcpy <register(dest_mem)> <register(n)> <register(src)>*
+		copies memory from src to dest ptrs with length n
 
-haltexe - opode (0xff) : 1 byte
-	haltexe
-		Immediately halts execution of program, implicitly placed at the end of program by the assembler to ensure data is not executed.
+	- *memset <register(dest_mem)> <register(n)> <register(src)>*
+		sets memory starting from dest_mem to dest_mem+n with src byte
+
+
+## subroutines
+	- *call <constant>*
+		pushes fp and pc to stack and then jumps to pc
+		```asm
+		call $x00aa
+		```
+		equivilent to
+		```asm
+		push fp
+		push pc
+		ldi r1,$x00aa
+		cpy pc,r1
+		```
+	- *ret*
+		pops pc and fp from stack and jumps back to return addr
+		```asm
+		ret
+		```
+		equivilent to
+		```asm
+		pop pc
+		pop fp
+		```
+
+## IO
+
+	- *fopen <register(dest)> <register(ptr)> register(len)*
+		attempts to open a file on the host using a string path,  returns file descriptor in dest
+		(current impl has crash on filenotfound)
+		```asm
+		fopen r3,r2,r1
+		```
+
+	- *fread <register(fd)> <register(buf)> register(len)*
+		attempts to read from fd until the buffer is full (len)
+		```asm
+		fread r3,r2,r1
+		```
+	- *fwrite <register(fd)> <register(buf)> register(len)*
+		attempts to write the contents of a buffer to fd
+	- *fseek <register(fd)> <register(n)> <register(bool)>*
+		attempts to move the file head of fd by n bytes,
+		(bool probably will be deprecated as interpreting
+		register as signed would be better)
+	- *fclose <register(fd)>*
+		closes a file
