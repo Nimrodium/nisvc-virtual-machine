@@ -118,54 +118,54 @@ pub enum Operation {
     // fwrite fd str_ptr str_len
     // fread fd buf_ptr buf_len
     // fclose fd
-    Fopen {
-        dest_fd: RegHandle,
-        file_path_str_ptr: RegHandle,
-        file_path_str_len: RegHandle,
-    },
-    Fread {
-        fd: RegHandle,
-        buf_ptr: RegHandle,
-        buf_len: RegHandle,
-    },
-    Fwrite {
-        fd: RegHandle,
-        buf_ptr: RegHandle,
-        buf_len: RegHandle,
-    },
-    Fseek {
-        fd: RegHandle,
-        seek: RegHandle,
-        direction: RegHandle,
-    },
-    Fclose {
-        fd: RegHandle,
-    },
-    //new
+    // Fopen {
+    //     dest_fd: RegHandle,
+    //     file_path_str_ptr: RegHandle,
+    //     file_path_str_len: RegHandle,
+    // },
+    // Fread {
+    //     fd: RegHandle,
+    //     buf_ptr: RegHandle,
+    //     buf_len: RegHandle,
+    // },
+    // Fwrite {
+    //     fd: RegHandle,
+    //     buf_ptr: RegHandle,
+    //     buf_len: RegHandle,
+    // },
+    // Fseek {
+    //     fd: RegHandle,
+    //     seek: RegHandle,
+    //     direction: RegHandle,
+    // },
+    // Fclose {
+    //     fd: RegHandle,
+    // },
+    // //new
 
-    //heap management
-    Malloc {
-        dest_ptr: RegHandle,
-        size: RegHandle,
-    },
-    Realloc {
-        dest_ptr: RegHandle,
-        ptr: RegHandle,
-        new_size: RegHandle,
-    },
-    Free {
-        ptr: RegHandle,
-    },
-    Memcpy {
-        dest: RegHandle,
-        n: RegHandle,
-        src: RegHandle,
-    },
-    Memset {
-        dest: RegHandle,
-        n: RegHandle,
-        value: RegHandle,
-    },
+    // //heap management
+    // Malloc {
+    //     dest_ptr: RegHandle,
+    //     size: RegHandle,
+    // },
+    // Realloc {
+    //     dest_ptr: RegHandle,
+    //     ptr: RegHandle,
+    //     new_size: RegHandle,
+    // },
+    // Free {
+    //     ptr: RegHandle,
+    // },
+    // Memcpy {
+    //     dest: RegHandle,
+    //     n: RegHandle,
+    //     src: RegHandle,
+    // },
+    // Memset {
+    //     dest: RegHandle,
+    //     n: RegHandle,
+    //     value: RegHandle,
+    // },
 
     // floating point
     Itof {
@@ -206,6 +206,9 @@ pub enum Operation {
         dest: RegHandle,
         op1: RegHandle,
         op2: RegHandle,
+    },
+    Int {
+        code: u64,
     },
     Breakpoint,
     HaltExe,

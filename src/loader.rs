@@ -6,12 +6,12 @@ pub struct NISVCEF {
     pub entry_point: u64,
     pub image: Vec<u8>,
     pub debug_symbols: DebugSymbols,
-    pub break_points: Vec<u64>,
+    // pub break_points: Vec<u64>,
 }
 
 /*
 
-[--signature--][--entry_point--][--img_length--][program][--break_point_block_length--][--break_points--][--labels_block_length--][--labels--]
+[--signature--][--entry_point--][--img_length--][program][--labels_block_length--][--labels--]
 
 label encoding
 
@@ -32,8 +32,8 @@ impl NISVCEF {
         let program_img_len = consume_double_word_vec(&mut stream)?;
         let image: Vec<u8> = stream.by_ref().take(program_img_len as usize).collect();
         let break_point_len = consume_double_word_vec(&mut stream)?;
-        let break_points: Vec<u64> =
-            build_breakpoint_vector(stream.by_ref().take(break_point_len as usize).collect())?; // convert to Vec<u64> likely gonna do some evil unsafe thing
+        // let break_points: Vec<u64> =
+        //     build_breakpoint_vector(stream.by_ref().take(break_point_len as usize).collect())?; // convert to Vec<u64> likely gonna do some evil unsafe thing
         let debug_symbols_len = consume_double_word_vec(&mut stream)?;
         let debug_symbols_img: Vec<u8> = stream.by_ref().take(debug_symbols_len as usize).collect();
         let debug_symbols = DebugSymbols::load_symbols(&debug_symbols_img)?;
@@ -41,7 +41,7 @@ impl NISVCEF {
             entry_point,
             image,
             debug_symbols,
-            break_points,
+            // break_points,
         })
     }
 }

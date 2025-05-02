@@ -41,7 +41,12 @@ impl Memory {
         // setup heap and stack
         self.hpa_write_hpa_node(self.heap_start, self.stack_start, false)?; // heap
         self.hpa_write_hpa_node(self.stack_start, HPA_TAIL_SENTINEL_ADDRESS, true)?;
-
+        println!(
+            "physical memory size: {}\nheap_ptr: {}\nstack_ptr: {}",
+            self.physical.len(),
+            self.heap_start,
+            self.stack_start
+        );
         Ok(())
     }
     pub fn read_byte(&self, address: u64) -> Result<u8, ExecutionError> {
@@ -79,14 +84,14 @@ impl Memory {
         }
         Ok(bytes_wrote)
     }
-    /// (value,bytes_read)
-    pub fn read_immediate(&self, address: u64) -> Result<(u64, u64), ExecutionError> {
-        let size_byte = self.read_byte(address)?;
-        Ok((
-            bytes_to_u64(&self.read(address + 1, size_byte as u64)?),
-            (size_byte + 1) as u64,
-        ))
-    }
+    // /// (value,bytes_read)
+    // pub fn read_immediate(&self, address: u64) -> Result<(u64, u64), ExecutionError> {
+    //     let size_byte = self.read_byte(address)?;
+    //     Ok((
+    //         bytes_to_u64(&self.read(address + 1, size_byte as u64)?),
+    //         (size_byte + 1) as u64,
+    //     ))
+    // }
     pub fn read_address(&self, address: u64) -> Result<u64, ExecutionError> {
         Ok(bytes_to_u64(&self.read(address, size_of::<u64>() as u64)?))
     }

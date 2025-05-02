@@ -19,6 +19,7 @@ use crate::{
     memory::{bytes_to_u64, Memory},
     opcode::Operation,
     verbose_println, very_verbose_println, very_very_verbose_println, ExecutionError,
+    GLOBAL_PROGRAM_COUNTER,
 };
 
 #[derive(Clone)]
@@ -183,6 +184,14 @@ impl Register {
             RegWindow::F => unsafe { self.internal.full },
         }
     }
+    // fn as_window_mut(&mut self, window: RegWindow) -> &mut Self {
+    //     self.window = window;
+    //     self
+    // }
+    // fn as_window(&mut self, window: RegWindow) -> &Self {
+    //     self.window = window;
+    //     self
+    // }
 }
 
 pub struct CPURegisters {
@@ -231,7 +240,12 @@ impl CPURegisters {
 
     pub fn print(&mut self, register_handle: RegHandle) -> String {
         let (idx, window) = decode_register(register_handle);
-        self.get_register(idx).name(window)
+        let name = self.get_register(idx).name(window);
+        format!(
+            "{}{}",
+            name.red(),
+            format!("(0x{:0>2x})", self.read(register_handle)).dark_blue()
+        )
     }
     pub fn print_float(&mut self, register_handle: RegHandle) -> String {
         todo!()
@@ -242,6 +256,7 @@ pub struct CPU {
     pub registers: CPURegisters,
     pub memory: Memory,
     pub vm_host_bridge: VMHostBridge,
+    pub pending_interrupt: u8,
 }
 
 impl CPU {
@@ -250,6 +265,7 @@ impl CPU {
             registers: CPURegisters::new(),
             memory: Memory::new(heap, stack),
             vm_host_bridge: VMHostBridge::new(),
+            pending_interrupt: 0,
         }
     }
     pub fn load(&mut self, file_path: &str) -> Result<(), ExecutionError> {
@@ -272,7 +288,6 @@ impl CPU {
         self.registers.write(FRAME_POINTER, self.memory.stack_start);
         Ok(())
     }
-
     /// advances pc and returns consumed byte
     fn consume_byte(&mut self) -> Result<u8, ExecutionError> {
         let pc = self.registers.read(PROGRAM_COUNTER);
@@ -280,21 +295,12 @@ impl CPU {
         self.registers.write(PROGRAM_COUNTER, pc + 1);
         Ok(byte)
     }
-
     /// advances pc and returns consumed address (double word u64)
-    fn consume_address(&mut self) -> Result<u64, ExecutionError> {
+    fn consume_constant(&mut self) -> Result<u64, ExecutionError> {
         let pc = self.registers.read(PROGRAM_COUNTER);
         let double_word = self.memory.read_address(pc)?;
         self.registers.write(PROGRAM_COUNTER, pc + 8);
         Ok(double_word)
-    }
-
-    /// advances pc and returns immediate value (will be deprecated in NISVC-Rev3 when all immediates are stored as double words)
-    fn consume_immediate(&mut self) -> Result<u64, ExecutionError> {
-        let pc = self.registers.read(PROGRAM_COUNTER);
-        let (immediate, bytes_read) = self.memory.read_immediate(pc)?;
-        self.registers.write(PROGRAM_COUNTER, pc + bytes_read);
-        Ok(immediate)
     }
 
     fn fetch_decode(&mut self) -> Result<Operation, ExecutionError> {
@@ -307,12 +313,12 @@ impl CPU {
             },
             0x02 => Operation::Ldi {
                 dest: self.consume_byte()?,
-                src: self.consume_immediate()?,
+                src: self.consume_constant()?,
             },
             0x03 => Operation::Load {
                 dest: self.consume_byte()?,
                 n: self.consume_byte()?,
-                addr: self.consume_address()?,
+                addr: self.consume_constant()?,
             },
             0x04 => Operation::Store {
                 dest: self.consume_byte()?,
@@ -383,15 +389,15 @@ impl CPU {
                 op: self.consume_byte()?,
             },
             0x12 => Operation::Jmp {
-                addr: self.consume_address()?,
+                addr: self.consume_constant()?,
             },
             0x13 => Operation::Jifz {
                 condition: self.consume_byte()?,
-                addr: self.consume_address()?,
+                addr: self.consume_constant()?,
             },
             0x14 => Operation::Jifnz {
                 condition: self.consume_byte()?,
-                addr: self.consume_address()?,
+                addr: self.consume_constant()?,
             },
             // pr
             0x16 => Operation::Inc {
@@ -407,88 +413,95 @@ impl CPU {
                 dest: self.consume_byte()?,
             },
             0x1a => Operation::Call {
-                addr: self.consume_address()?,
+                addr: self.consume_constant()?,
             },
             0x1b => Operation::Ret,
-            0x1e => Operation::Fopen {
-                dest_fd: self.consume_byte()?,
-                file_path_str_ptr: self.consume_byte()?,
-                file_path_str_len: self.consume_byte()?,
-            },
-            0x1f => Operation::Fread {
-                fd: self.consume_byte()?,
-                buf_ptr: self.consume_byte()?,
-                buf_len: self.consume_byte()?,
-            },
-            0x20 => Operation::Fwrite {
-                fd: self.consume_byte()?,
-                buf_ptr: self.consume_byte()?,
-                buf_len: self.consume_byte()?,
-            },
-            0x21 => Operation::Fseek {
-                fd: self.consume_byte()?,
-                seek: self.consume_byte()?,
-                direction: self.consume_byte()?,
-            },
-            0x22 => Operation::Fclose {
-                fd: self.consume_byte()?,
-            },
-            0x23 => Operation::Malloc {
-                dest_ptr: self.consume_byte()?,
-                size: self.consume_byte()?,
-            },
-            0x24 => Operation::Realloc {
-                dest_ptr: self.consume_byte()?,
-                ptr: self.consume_byte()?,
-                new_size: self.consume_byte()?,
-            },
-            0x25 => Operation::Free {
-                ptr: self.consume_byte()?,
-            },
-            0x26 => Operation::Memset {
-                dest: self.consume_byte()?,
-                n: self.consume_byte()?,
-                value: self.consume_byte()?,
-            },
-            0x27 => Operation::Memcpy {
-                dest: self.consume_byte()?,
-                n: self.consume_byte()?,
-                src: self.consume_byte()?,
-            },
-            0x28 => Operation::Itof {
+            // 0x1e => Operation::Fopen {
+            //     dest_fd: self.consume_byte()?,
+            //     file_path_str_ptr: self.consume_byte()?,
+            //     file_path_str_len: self.consume_byte()?,
+            // },
+            // 0x1f => Operation::Fread {
+            //     fd: self.consume_byte()?,
+            //     buf_ptr: self.consume_byte()?,
+            //     buf_len: self.consume_byte()?,
+            // },
+            // 0x20 => Operation::Fwrite {
+            //     fd: self.consume_byte()?,
+            //     buf_ptr: self.consume_byte()?,
+            //     buf_len: self.consume_byte()?,
+            // },
+            // 0x21 => Operation::Fseek {
+            //     fd: self.consume_byte()?,
+            //     seek: self.consume_byte()?,
+            //     direction: self.consume_byte()?,
+            // },
+            // 0x22 => Operation::Fclose {
+            //     fd: self.consume_byte()?,
+            // },
+            // 0x23 => Operation::Malloc {
+            //     dest_ptr: self.consume_byte()?,
+            //     size: self.consume_byte()?,
+            // },
+            // 0x24 => Operation::Realloc {
+            //     dest_ptr: self.consume_byte()?,
+            //     ptr: self.consume_byte()?,
+            //     new_size: self.consume_byte()?,
+            // },
+            // 0x25 => Operation::Free {
+            //     ptr: self.consume_byte()?,
+            // },
+            // 0x26 => Operation::Memset {
+            //     dest: self.consume_byte()?,
+            //     n: self.consume_byte()?,
+            //     value: self.consume_byte()?,
+            // },
+            // 0x27 => Operation::Memcpy {
+            //     dest: self.consume_byte()?,
+            //     n: self.consume_byte()?,
+            //     src: self.consume_byte()?,
+            // },
+            0x1c => Operation::Itof {
                 destf: self.consume_byte()?,
                 srci: self.consume_byte()?,
             },
-            0x29 => Operation::Ftoi {
+            0x1d => Operation::Ftoi {
                 desti: self.consume_byte()?,
                 srcf: self.consume_byte()?,
             },
-            0x2a => Operation::Fadd {
+            0x1e => Operation::Fadd {
                 dest: self.consume_byte()?,
                 op1: self.consume_byte()?,
                 op2: self.consume_byte()?,
             },
-            0x2b => Operation::Fsub {
+            0x1f => Operation::Fsub {
                 dest: self.consume_byte()?,
                 op1: self.consume_byte()?,
                 op2: self.consume_byte()?,
             },
-            0x2c => Operation::Fmult {
+            0x20 => Operation::Fmult {
                 dest: self.consume_byte()?,
                 op1: self.consume_byte()?,
                 op2: self.consume_byte()?,
             },
-            0x2d => Operation::Fdiv {
+            0x21 => Operation::Fdiv {
                 dest: self.consume_byte()?,
                 op1: self.consume_byte()?,
                 op2: self.consume_byte()?,
             },
-            0x2e => Operation::Fmod {
+            0x22 => Operation::Fmod {
                 dest: self.consume_byte()?,
                 op1: self.consume_byte()?,
                 op2: self.consume_byte()?,
             },
-
+            0x23 => Operation::Mod {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x24 => Operation::Int {
+                code: self.consume_constant()?,
+            },
             0xfd => todo!(),
             0xff => todo!(),
             _ => panic!("unrecognized opcode"),
@@ -510,7 +523,7 @@ impl CPU {
                 );
             }
             Operation::Ldi { dest, src } => {
-                log_disassembly!("cpy {}, ${}", self.registers.print(dest), src);
+                log_disassembly!("ldi {}, ${}", self.registers.print(dest), src);
                 self.registers.write(dest, src);
             }
 
@@ -582,6 +595,7 @@ impl CPU {
                 );
             }
             Operation::Div { dest, op1, op2 } => {
+                let op1_val = self.registers.read(op1);
                 let op2_val = self.registers.read(op2);
                 if op2_val == 0 {
                     return Err(ExecutionError::new(format!(
@@ -747,138 +761,138 @@ impl CPU {
                 self.registers.write(PROGRAM_COUNTER, addr);
             }
             Operation::Ret => todo!(),
-            Operation::Fopen {
-                dest_fd,
-                file_path_str_ptr,
-                file_path_str_len,
-            } => {
-                let ptr = self.registers.read(file_path_str_ptr);
-                let len = self.registers.read(file_path_str_len);
-                let path = unsafe { String::from_utf8_unchecked(self.memory.read(ptr, len)?) }; // if this explodes then make checked
+            // Operation::Fopen {
+            //     dest_fd,
+            //     file_path_str_ptr,
+            //     file_path_str_len,
+            // } => {
+            //     let ptr = self.registers.read(file_path_str_ptr);
+            //     let len = self.registers.read(file_path_str_len);
+            //     let path = unsafe { String::from_utf8_unchecked(self.memory.read(ptr, len)?) }; // if this explodes then make checked
 
-                let fd = self.vm_host_bridge.fopen(&path)?;
-                self.registers.write(dest_fd, fd);
+            //     let fd = self.vm_host_bridge.fopen(&path)?;
+            //     self.registers.write(dest_fd, fd);
 
-                log_disassembly!(
-                    "fopen {}, {}, {}",
-                    self.registers.print(dest_fd),
-                    self.registers.print(file_path_str_ptr),
-                    self.registers.print(file_path_str_len),
-                );
-            }
-            Operation::Fread {
-                fd,
-                buf_ptr,
-                buf_len,
-            } => {
-                let fd_val = self.registers.read(fd);
-                let ptr = self.registers.read(buf_ptr);
-                let len = self.registers.read(buf_len);
+            //     log_disassembly!(
+            //         "fopen {}, {}, {}",
+            //         self.registers.print(dest_fd),
+            //         self.registers.print(file_path_str_ptr),
+            //         self.registers.print(file_path_str_len),
+            //     );
+            // }
+            // Operation::Fread {
+            //     fd,
+            //     buf_ptr,
+            //     buf_len,
+            // } => {
+            //     let fd_val = self.registers.read(fd);
+            //     let ptr = self.registers.read(buf_ptr);
+            //     let len = self.registers.read(buf_len);
 
-                let bytes = self.vm_host_bridge.fread(fd_val, len as usize)?;
-                self.memory.write(ptr, &bytes)?;
+            //     let bytes = self.vm_host_bridge.fread(fd_val, len as usize)?;
+            //     self.memory.write(ptr, &bytes)?;
 
-                log_disassembly!(
-                    "fread {}, {}, {}",
-                    self.registers.print(fd),
-                    self.registers.print(buf_ptr),
-                    self.registers.print(buf_len)
-                )
-            }
-            Operation::Fwrite {
-                fd,
-                buf_ptr,
-                buf_len,
-            } => {
-                let fd_val = self.registers.read(fd);
-                let ptr = self.registers.read(buf_ptr);
-                let len = self.registers.read(buf_len);
-                let bytes = self.memory.read(ptr, len)?;
-                self.vm_host_bridge.fwrite(fd_val, &bytes)?;
-                log_disassembly!(
-                    "fwrite {}, {}, {}",
-                    self.registers.print(fd),
-                    self.registers.print(buf_ptr),
-                    self.registers.print(buf_len)
-                )
-            }
-            Operation::Fseek {
-                fd,
-                seek,
-                direction,
-            } => {
-                let fd_val = self.registers.read(fd);
-                let seek_val = self.registers.read(seek);
-                let direction_val = self.registers.read(direction);
-                self.vm_host_bridge
-                    .fseek(fd_val, seek_val as usize, direction_val as u8)?;
+            //     log_disassembly!(
+            //         "fread {}, {}, {}",
+            //         self.registers.print(fd),
+            //         self.registers.print(buf_ptr),
+            //         self.registers.print(buf_len)
+            //     )
+            // }
+            // Operation::Fwrite {
+            //     fd,
+            //     buf_ptr,
+            //     buf_len,
+            // } => {
+            //     let fd_val = self.registers.read(fd);
+            //     let ptr = self.registers.read(buf_ptr);
+            //     let len = self.registers.read(buf_len);
+            //     let bytes = self.memory.read(ptr, len)?;
+            //     self.vm_host_bridge.fwrite(fd_val, &bytes)?;
+            //     log_disassembly!(
+            //         "fwrite {}, {}, {}",
+            //         self.registers.print(fd),
+            //         self.registers.print(buf_ptr),
+            //         self.registers.print(buf_len)
+            //     )
+            // }
+            // Operation::Fseek {
+            //     fd,
+            //     seek,
+            //     direction,
+            // } => {
+            //     let fd_val = self.registers.read(fd);
+            //     let seek_val = self.registers.read(seek);
+            //     let direction_val = self.registers.read(direction);
+            //     self.vm_host_bridge
+            //         .fseek(fd_val, seek_val as usize, direction_val as u8)?;
 
-                log_disassembly!(
-                    "fseek {}, {}, {}",
-                    self.registers.print(fd),
-                    self.registers.print(seek),
-                    self.registers.print(direction)
-                );
-            }
-            Operation::Fclose { fd } => {
-                let fd_val = self.registers.read(fd);
-                self.vm_host_bridge.fclose(fd_val)?;
-                log_disassembly!("fclose {}", self.registers.print(fd));
-            }
-            Operation::Malloc { dest_ptr, size } => {
-                let size_val = self.registers.read(size);
-                let ptr = self.memory.malloc(size_val)?;
-                self.registers.write(dest_ptr, ptr);
-                log_disassembly!(
-                    "malloc {}, {}",
-                    self.registers.print(dest_ptr),
-                    self.registers.print(size)
-                );
-            }
-            Operation::Realloc {
-                dest_ptr,
-                ptr,
-                new_size,
-            } => {
-                let size_val = self.registers.read(new_size);
-                let old_ptr = self.registers.read(ptr);
-                let new_ptr = self.memory.realloc(old_ptr, size_val)?;
-                self.registers.write(dest_ptr, new_ptr);
-                log_disassembly!(
-                    "malloc {}, {}",
-                    self.registers.print(dest_ptr),
-                    self.registers.print(new_size)
-                );
-            }
-            Operation::Free { ptr } => {
-                let ptr_val = self.registers.read(ptr);
-                self.memory.free(ptr_val)?;
-                log_disassembly!("free {}", self.registers.read(ptr));
-            }
-            Operation::Memcpy { dest, n, src } => {
-                let dest_val = self.registers.read(dest);
-                let n_val = self.registers.read(n);
-                let src_val = self.registers.read(src);
-                self.memory.memcpy(dest_val, src_val, n_val);
-                log_disassembly!(
-                    "memcpy {}, {}, {}",
-                    self.registers.print(dest),
-                    self.registers.print(n),
-                    self.registers.print(src),
-                )
-            }
-            Operation::Memset { dest, n, value } => {
-                let dest_val = self.registers.read(dest);
-                let n_val = self.registers.read(n);
-                let val = self.registers.read(value);
-                self.memory.memset(dest_val, val as u8, n_val)?;
-                log_disassembly!(
-                    "memcpy {}, {}, {}",
-                    self.registers.print(dest),
-                    self.registers.print(n),
-                    self.registers.print(value),
-                )
-            }
+            //     log_disassembly!(
+            //         "fseek {}, {}, {}",
+            //         self.registers.print(fd),
+            //         self.registers.print(seek),
+            //         self.registers.print(direction)
+            //     );
+            // }
+            // Operation::Fclose { fd } => {
+            //     let fd_val = self.registers.read(fd);
+            //     self.vm_host_bridge.fclose(fd_val)?;
+            //     log_disassembly!("fclose {}", self.registers.print(fd));
+            // }
+            // Operation::Malloc { dest_ptr, size } => {
+            //     let size_val = self.registers.read(size);
+            //     let ptr = self.memory.malloc(size_val)?;
+            //     self.registers.write(dest_ptr, ptr);
+            //     log_disassembly!(
+            //         "malloc {}, {}",
+            //         self.registers.print(dest_ptr),
+            //         self.registers.print(size)
+            //     );
+            // }
+            // Operation::Realloc {
+            //     dest_ptr,
+            //     ptr,
+            //     new_size,
+            // } => {
+            //     let size_val = self.registers.read(new_size);
+            //     let old_ptr = self.registers.read(ptr);
+            //     let new_ptr = self.memory.realloc(old_ptr, size_val)?;
+            //     self.registers.write(dest_ptr, new_ptr);
+            //     log_disassembly!(
+            //         "malloc {}, {}",
+            //         self.registers.print(dest_ptr),
+            //         self.registers.print(new_size)
+            //     );
+            // }
+            // Operation::Free { ptr } => {
+            //     let ptr_val = self.registers.read(ptr);
+            //     self.memory.free(ptr_val)?;
+            //     log_disassembly!("free {}", self.registers.read(ptr));
+            // }
+            // Operation::Memcpy { dest, n, src } => {
+            //     let dest_val = self.registers.read(dest);
+            //     let n_val = self.registers.read(n);
+            //     let src_val = self.registers.read(src);
+            //     self.memory.memcpy(dest_val, src_val, n_val)?;
+            //     log_disassembly!(
+            //         "memcpy {}, {}, {}",
+            //         self.registers.print(dest),
+            //         self.registers.print(n),
+            //         self.registers.print(src),
+            //     )
+            // }
+            // Operation::Memset { dest, n, value } => {
+            //     let dest_val = self.registers.read(dest);
+            //     let n_val = self.registers.read(n);
+            //     let val = self.registers.read(value);
+            //     self.memory.memset(dest_val, val as u8, n_val)?;
+            //     log_disassembly!(
+            //         "memcpy {}, {}, {}",
+            //         self.registers.print(dest),
+            //         self.registers.print(n),
+            //         self.registers.print(value),
+            //     )
+            // }
             Operation::Itof { destf, srci } => {
                 let f = self.registers.read(srci) as f64;
 
@@ -979,17 +993,19 @@ impl CPU {
 
             Operation::Breakpoint => todo!(),
             Operation::HaltExe => todo!("haltexe"),
+
+            Operation::Int { code } => self.pending_interrupt = code as u8,
         };
         Ok(())
     }
 
     pub fn step(&mut self) -> Result<(), ExecutionError> {
-        todo!()
+        let op = self.fetch_decode()?;
+        self.execute(op)?;
+        unsafe { GLOBAL_PROGRAM_COUNTER = self.registers.read(PROGRAM_COUNTER) }
+        Ok(())
     }
 
-    pub fn exec_loop(&mut self) -> Result<(), ExecutionError> {
-        todo!()
-    }
     fn break_point(&mut self) -> Result<(), ExecutionError> {
         Ok(())
     }
@@ -997,9 +1013,11 @@ impl CPU {
     pub fn push(&mut self, value: u64) -> Result<(), ExecutionError> {
         let sp = self.registers.read(STACK_POINTER);
         let sp_d = self.memory.push(sp, value)?;
+        println!("write {value} to {sp}");
         self.registers.write(STACK_POINTER, sp + sp_d);
         Ok(())
     }
+
     pub fn pop(&mut self) -> Result<u64, ExecutionError> {
         let sp = self.registers.read(STACK_POINTER);
         let (value, sp_d) = self.memory.pop(sp)?;
@@ -1013,6 +1031,14 @@ pub enum Kind {
     MutableRegister,
     Immediate,
     Address,
+}
+
+pub struct DecodedInstruction {
+    pub immutable_registers: Vec<Register>,
+    pub mutable_registers: Vec<u8>,
+
+    pub addresses: Vec<u64>,
+    pub immediates: Vec<u64>,
 }
 
 type VMFD = u64;

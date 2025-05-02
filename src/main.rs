@@ -4,6 +4,7 @@
 mod bridge;
 mod constant;
 mod cpu;
+mod kernel;
 mod loader;
 mod memory;
 mod opcode;
@@ -12,6 +13,7 @@ use std::fmt;
 // use colorize::AnsiColor;
 use cpu::CPU;
 use crossterm::style::Stylize;
+use kernel::Kernel;
 
 use crate::constant::NAME;
 
@@ -37,27 +39,40 @@ impl fmt::Display for ExecutionError {
 
 static mut GLOBAL_CLOCK: usize = 0;
 
-static mut DISASSEMBLE: bool = false;
+static mut GLOBAL_PROGRAM_COUNTER: u64 = 0;
+
+static mut DISASSEMBLE: bool = true;
 static mut VERBOSE_FLAG: usize = 0;
 static mut OUTPUT_FLAG: bool = false;
 static mut INPUT_FLAG: bool = false;
 
 fn main() {
-    let mut cpu = CPU::new(10_000, 10_000);
-    match cpu.load("placeholder") {
+    // let mut cpu = CPU::new(10_000, 10_000);
+    // match cpu.load("placeholder") {
+    //     Ok(()) => (),
+    //     Err(e) => println!("{e}"),
+    // };
+
+    match real_main() {
         Ok(()) => (),
         Err(e) => println!("{e}"),
-    };
+    }
+}
+
+fn real_main() -> Result<(), ExecutionError> {
+    let mut kernel = Kernel::new(10_000, 10_000);
+    kernel.system.load("nisvc.out")?;
+    kernel.run()?;
+    Ok(())
 }
 
 fn _log_disassembly(msg: &str) {
     unsafe {
         if DISASSEMBLE {
             println!(
-                "{NAME}: {GLOBAL_CLOCK:0>4x}: {} {}",
-                "disassembled:".green(),
-                msg
-            )
+                "{}: {msg}",
+                format!("{GLOBAL_PROGRAM_COUNTER:0>4x}").on_dark_green()
+            );
         }
     }
 }
