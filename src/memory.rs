@@ -1,11 +1,11 @@
 use std::mem::transmute;
 
-use crate::{constant::UNINITIALIZED_MEMORY, ExecutionError};
+use crate::{constant::UNINITIALIZED_MEMORY, kernel_log, ExecutionError};
 const HPA_NODE_DATA_OFFSET: u64 = 9;
 const HPA_TAIL_SENTINEL_ADDRESS: u64 = 0;
 pub type nisvc_ptr = u64;
 pub struct Memory {
-    physical: Vec<u8>,
+    pub physical: Vec<u8>,
     range: u64,
     heap_size: u64,
     stack_size: u64,
@@ -107,6 +107,7 @@ impl Memory {
         let value = bytes_to_u64(&self.read(ptr, value_size)?);
         Ok((ptr, value))
     }
+
     /*
 
     heap allocation operates using a linked list of booleans (free/occupied) heap regions
@@ -124,7 +125,10 @@ impl Memory {
     pub fn malloc(&mut self, size: u64) -> Result<u64, ExecutionError> {
         self.total_heap_allocations += 1;
         let ptr = self.hpa_get_allocation_canditate(size)?;
-        self.hpa_write_hpa_node_allocation_status(ptr, true)?;
+        let new_node_ptr = ptr + size + HPA_NODE_DATA_OFFSET;
+        let (_, old_next) = self.hpa_read_hpa_node(ptr)?;
+        self.hpa_write_hpa_node(ptr, new_node_ptr, true)?;
+        self.hpa_write_hpa_node(new_node_ptr, old_next, false)?;
         Ok(ptr)
     }
 
@@ -189,6 +193,7 @@ impl Memory {
             let dest_ptr = dest + ptr;
             let src_byte = self.read_byte(src_ptr)?;
             self.write_byte(dest_ptr, src_byte)?;
+            // println!("{dest_ptr:#x}: {}", self.read_byte(dest_ptr)? as char);
         }
         Ok(())
     }
@@ -209,6 +214,7 @@ impl Memory {
             Ok(final_canditate)
         } else {
             // potential OOM error
+            kernel_log!("under memory pressure");
             self.hpa_defragment(self.heap_start, true)?;
             if let Some(final_canditate) = self.hpa_get_allocation_canditate_internal(size)? {
                 Ok(final_canditate)
@@ -228,6 +234,7 @@ impl Memory {
         let mut canditate: Option<u64> = None;
         loop {
             let (current_is_allocated, current_next) = self.hpa_read_hpa_node(ptr)?;
+            // println!("node: {current_is_allocated}:{current_next:#x}");
             if current_next == HPA_TAIL_SENTINEL_ADDRESS {
                 break;
             }
@@ -238,7 +245,7 @@ impl Memory {
             let canditate_size = (current_next - HPA_NODE_DATA_OFFSET) - ptr;
             let former_canditate_size = if let Some(n) = canditate { n } else { u64::MAX };
             if canditate_size >= size && canditate_size < former_canditate_size {
-                canditate = Some(current_next)
+                canditate = Some(ptr)
             }
             ptr = current_next
         }

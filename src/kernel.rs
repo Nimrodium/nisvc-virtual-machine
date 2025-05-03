@@ -4,16 +4,23 @@ use std::{
     io::{stderr, stdin, stdout, Read, Seek, Stderr, Stdin, Stdout, Write},
 };
 
-use crate::{cpu::CPU, ExecutionError};
+use crossterm::style::Stylize;
+use sdl2::{libc::MS_SILENT, sys::exit};
+
+use crate::{constant::STACK_POINTER, cpu::CPU, kernel_log, ExecutionError, _kernel_log, gpu::GPU};
+
+pub static mut SILENCE_KERNEL: bool = false;
 /// - `0x01..0x30`: nhk interrupts
 /// - `0x31..0xfe`: program defined interrupts
 /// - `0xff`: hard execution stop
 pub struct Kernel {
     pub system: CPU,
+    pub gpu: Option<GPU>,
     user_interrupt_vector: [u64; 205],
     breakpoint_vector: Vec<u64>,
     file_descriptor_vector: HashMap<u64, IOInterface>,
     next_fd: u64,
+    // frame_buffer_ptr: u64,
 }
 impl Kernel {
     pub fn new(heap: u64, stack: u64) -> Self {
@@ -21,12 +28,20 @@ impl Kernel {
         file_descriptor_vector.insert(0, IOInterface::Stdin(stdin()));
         file_descriptor_vector.insert(1, IOInterface::Stdout(stdout()));
         file_descriptor_vector.insert(2, IOInterface::Stderr(stderr()));
+        let mut gpu_test = match GPU::new(0, 100, 100) {
+            Ok(g) => g,
+            Err(e) => {
+                panic!("{e}")
+            }
+        };
         Self {
             system: CPU::new(heap, stack),
+            gpu: Some(gpu_test),
             user_interrupt_vector: [0; 205],
             breakpoint_vector: Vec::new(),
             file_descriptor_vector,
             next_fd: 3,
+            // frame_buffer_ptr:None,
         }
     }
 
@@ -49,13 +64,89 @@ impl Kernel {
             }
             0x02 => {
                 // file write
-                let file_descriptor = self.system.pop()?;
-                let buf_ptr = self.system.pop()?;
+                kernel_log!("write");
                 let buf_len = self.system.pop()?;
+                let buf_ptr = self.system.pop()?;
+                let file_descriptor = self.system.pop()?;
                 let buffer = self.system.memory.read(buf_ptr, buf_len)?;
+                // kernel_log!("write buffer: {:?}, len: {}", buffer, buffer.len());
+
                 self.write_file(file_descriptor, &buffer)?;
                 Ok(())
             }
+            0x03 => {
+                //file read
+                kernel_log!("read");
+                todo!()
+            }
+            0x04 => {
+                //file seek
+                kernel_log!("seek");
+                todo!()
+            }
+            0x05 => {
+                // file close
+                kernel_log!("close");
+                todo!()
+            }
+            0x06 => {
+                // silence print
+                unsafe { SILENCE_KERNEL = true };
+                Ok(())
+            }
+            0x07 => {
+                // rawtty toggle
+                kernel_log!("rawtty switch");
+                todo!()
+            }
+            0x08 => {
+                // tty cursor relative x y
+                kernel_log!("tty relative cursor");
+                todo!()
+            }
+            0x09 => {
+                // tty cursor absolute x y
+                kernel_log!("tty absolute cursor");
+                todo!()
+            }
+            0x0a => {
+                // malloc
+                kernel_log!("malloc");
+                let size = self.system.pop()?;
+                let ptr = self.system.memory.malloc(size)?;
+                self.system.push(ptr)
+            }
+            0x0b => {
+                // realloc
+                kernel_log!("realloc");
+                let new_size = self.system.pop()?;
+                let ptr = self.system.pop()?;
+                let new_ptr = self.system.memory.realloc(ptr, new_size)?;
+                self.system.push(new_ptr)
+            }
+            0x0c => {
+                // free
+                kernel_log!("free");
+                let ptr = self.system.pop()?;
+                self.system.memory.free(ptr)
+            }
+            0x0d => {
+                // memcpy
+                kernel_log!("memcpy");
+                let src = self.system.pop()?;
+                let n = self.system.pop()?;
+                let dest = self.system.pop()?;
+                self.system.memory.memcpy(dest, src, n)
+            }
+            0x0e => {
+                // memset
+                kernel_log!("memset");
+                let src = self.system.pop()?;
+                let n = self.system.pop()?;
+                let dest = self.system.pop()?;
+                self.system.memory.memset(dest, src as u8, n)
+            }
+
             _ => todo!(),
         }
     }
@@ -66,9 +157,41 @@ impl Kernel {
             match self.system.pending_interrupt {
                 0x00 => continue,
                 0xff => break,
-                _ => self.handle_interrupt(self.system.pending_interrupt)?,
+                _ => {
+                    // kernel_log!("decoding {:#x}", self.system.pending_interrupt);
+                    self.handle_interrupt(self.system.pending_interrupt)?;
+                    self.system.pending_interrupt = 0;
+                }
             }
         }
+        self.gpu_fb_refresh()?;
+
+        if let Some(gpu) = self.gpu.as_mut() {
+            loop {
+                gpu.handle_responsive()?;
+            }
+        }
+        Ok(())
+    }
+    pub fn gpu_fb_refresh(&mut self) -> Result<(), ExecutionError> {
+        let gpu = self.gpu.as_mut().unwrap();
+        // let frame_buffer = self
+        //     .system
+        //     .memory
+        //     .read(gpu.stdmem_frame_buffer_ptr, gpu.fb_size)?;
+        let frame_buffer = &self.system.memory.physical[gpu.stdmem_frame_buffer_ptr as usize
+            ..(gpu.stdmem_frame_buffer_ptr + gpu.fb_size) as usize];
+        gpu.draw(frame_buffer)?;
+        Ok(())
+    }
+    pub fn core_dump(&mut self) -> Result<(), ExecutionError> {
+        const CORE: &str = "nisvc.core";
+        let mut core_file = File::create(CORE)
+            .map_err(|e| ExecutionError::new(format!("failed to dump core: {e}")))?;
+        core_file
+            .write_all(&self.system.memory.physical)
+            .map_err(|e| ExecutionError::new(format!("failed to dump core: {e}")))?;
+        println!("{}", "core dumped".on_red());
         Ok(())
     }
 

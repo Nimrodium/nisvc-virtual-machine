@@ -1,4 +1,5 @@
 use crate::cpu::{Kind, RegHandle};
+#[derive(Debug)]
 pub enum Operation {
     Nop,
     Cpy {
@@ -209,6 +210,9 @@ pub enum Operation {
     },
     Int {
         code: u64,
+    },
+    Pushi {
+        immediate: u64,
     },
     Breakpoint,
     HaltExe,

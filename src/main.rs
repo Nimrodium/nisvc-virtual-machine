@@ -4,6 +4,7 @@
 mod bridge;
 mod constant;
 mod cpu;
+mod gpu;
 mod kernel;
 mod loader;
 mod memory;
@@ -11,9 +12,8 @@ mod opcode;
 use std::fmt;
 
 // use colorize::AnsiColor;
-use cpu::CPU;
 use crossterm::style::Stylize;
-use kernel::Kernel;
+use kernel::{Kernel, SILENCE_KERNEL};
 
 use crate::constant::NAME;
 
@@ -62,7 +62,16 @@ fn main() {
 fn real_main() -> Result<(), ExecutionError> {
     let mut kernel = Kernel::new(10_000, 10_000);
     kernel.system.load("nisvc.out")?;
-    kernel.run()?;
+    // kernel.gpu.as_mut().unwrap().renderer.present();
+    match kernel.run() {
+        Ok(()) => (),
+        Err(e) => {
+            // println!("stack dump:\n{:#?}", kernel.system.dump_stack());
+            kernel.core_dump()?;
+            println!("{e}");
+        }
+    };
+    kernel.core_dump()?;
     Ok(())
 }
 
@@ -73,6 +82,18 @@ fn _log_disassembly(msg: &str) {
                 "{}: {msg}",
                 format!("{GLOBAL_PROGRAM_COUNTER:0>4x}").on_dark_green()
             );
+        }
+    }
+}
+
+fn _kernel_log(msg: &str) {
+    unsafe {
+        if !SILENCE_KERNEL {
+            println!(
+                "{}: {}",
+                format!("{GLOBAL_PROGRAM_COUNTER:0>4x} NFK:").on_dark_blue(),
+                msg
+            )
         }
     }
 }
@@ -130,6 +151,11 @@ fn _very_very_verbose_println(msg: &str) {
 #[macro_export]
 macro_rules! log_disassembly {
     ($($arg:tt)*) => (crate::_log_disassembly(&format!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! kernel_log {
+    ($($arg:tt)*) => (crate::_kernel_log(&format!($($arg)*)));
 }
 
 #[macro_export]

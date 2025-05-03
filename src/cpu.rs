@@ -269,14 +269,8 @@ impl CPU {
         }
     }
     pub fn load(&mut self, file_path: &str) -> Result<(), ExecutionError> {
-        let mut file = File::open(file_path).map_err(|e| {
-            ExecutionError::new(format!(
-                "{} {e}",
-                "cannot open file `{file_path}`:"
-                    .on_dark_yellow()
-                    .to_string()
-            ))
-        })?;
+        let mut file = File::open(file_path)
+            .map_err(|e| ExecutionError::new(format!("cannot open file `{file_path}`: {e}",)))?;
         let mut contents: Vec<u8> = Vec::new();
         file.read_to_end(&mut contents)
             .map_err(|e| ExecutionError::new(format!("cannot read file to memory: {e}")))?;
@@ -293,6 +287,8 @@ impl CPU {
         let pc = self.registers.read(PROGRAM_COUNTER);
         let byte = self.memory.read_byte(pc)?;
         self.registers.write(PROGRAM_COUNTER, pc + 1);
+        very_verbose_println!("byte at {pc:#x} consumed: {:#x}", byte);
+
         Ok(byte)
     }
     /// advances pc and returns consumed address (double word u64)
@@ -300,6 +296,12 @@ impl CPU {
         let pc = self.registers.read(PROGRAM_COUNTER);
         let double_word = self.memory.read_address(pc)?;
         self.registers.write(PROGRAM_COUNTER, pc + 8);
+        very_verbose_println!(
+            "byte at {pc:#x}..{:#x} consumed: {:#x}",
+            pc + 8,
+            double_word
+        );
+
         Ok(double_word)
     }
 
@@ -502,6 +504,9 @@ impl CPU {
             0x24 => Operation::Int {
                 code: self.consume_constant()?,
             },
+            0x25 => Operation::Pushi {
+                immediate: self.consume_constant()?,
+            },
             0xfd => todo!(),
             0xff => todo!(),
             _ => panic!("unrecognized opcode"),
@@ -510,6 +515,7 @@ impl CPU {
     }
 
     fn execute(&mut self, operation: Operation) -> Result<(), ExecutionError> {
+        very_verbose_println!("exec {:?}", operation);
         match operation {
             Operation::Nop => log_disassembly!("nop"),
             Operation::Cpy { dest, src } => {
@@ -523,8 +529,8 @@ impl CPU {
                 );
             }
             Operation::Ldi { dest, src } => {
-                log_disassembly!("ldi {}, ${}", self.registers.print(dest), src);
                 self.registers.write(dest, src);
+                log_disassembly!("ldi {}, ${}", self.registers.print(dest), src);
             }
 
             Operation::Load { dest, n, addr } => {
@@ -994,7 +1000,14 @@ impl CPU {
             Operation::Breakpoint => todo!(),
             Operation::HaltExe => todo!("haltexe"),
 
-            Operation::Int { code } => self.pending_interrupt = code as u8,
+            Operation::Int { code } => {
+                log_disassembly!("int {:#x}", code);
+                self.pending_interrupt = code as u8
+            }
+            Operation::Pushi { immediate } => {
+                log_disassembly!("pushi {immediate:#x}");
+                self.push(immediate)?
+            }
         };
         Ok(())
     }
@@ -1013,16 +1026,26 @@ impl CPU {
     pub fn push(&mut self, value: u64) -> Result<(), ExecutionError> {
         let sp = self.registers.read(STACK_POINTER);
         let sp_d = self.memory.push(sp, value)?;
-        println!("write {value} to {sp}");
-        self.registers.write(STACK_POINTER, sp + sp_d);
+        self.registers.write(STACK_POINTER, sp_d);
         Ok(())
     }
 
     pub fn pop(&mut self) -> Result<u64, ExecutionError> {
         let sp = self.registers.read(STACK_POINTER);
-        let (value, sp_d) = self.memory.pop(sp)?;
-        self.registers.write(STACK_POINTER, sp - sp_d);
+        let (sp_d, value) = self.memory.pop(sp)?;
+        self.registers.write(STACK_POINTER, sp_d);
         Ok(value)
+    }
+    pub fn dump_stack(&mut self) -> Vec<u64> {
+        let mut stack_dump = Vec::<u64>::new();
+        while self.registers.read(STACK_POINTER) != self.memory.stack_start {
+            let popped = match self.pop() {
+                Ok(p) => p,
+                Err(_) => break,
+            };
+            stack_dump.push(popped);
+        }
+        stack_dump
     }
 }
 
