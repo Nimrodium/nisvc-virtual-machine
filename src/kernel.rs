@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fs::File,
+    fs::{File, Metadata},
     io::{stderr, stdin, stdout, Read, Seek, Stderr, Stdin, Stdout, Write},
 };
 
@@ -28,15 +28,15 @@ impl Kernel {
         file_descriptor_vector.insert(0, IOInterface::Stdin(stdin()));
         file_descriptor_vector.insert(1, IOInterface::Stdout(stdout()));
         file_descriptor_vector.insert(2, IOInterface::Stderr(stderr()));
-        let mut gpu_test = match GPU::new(0, 100, 100) {
-            Ok(g) => g,
-            Err(e) => {
-                panic!("{e}")
-            }
-        };
+        // let mut gpu_test = match GPU::new(0, 200, 200) {
+        //     Ok(g) => g,
+        //     Err(e) => {
+        //         panic!("{e}")
+        //     }
+        // };
         Self {
             system: CPU::new(heap, stack),
-            gpu: Some(gpu_test),
+            gpu: None,
             user_interrupt_vector: [0; 205],
             breakpoint_vector: Vec::new(),
             file_descriptor_vector,
@@ -54,17 +54,19 @@ impl Kernel {
         match code {
             0x01 => {
                 // file open
-                let str_ptr = self.system.pop()?;
+
                 let str_len = self.system.pop()?;
+                let str_ptr = self.system.pop()?;
                 let str_bytes = self.system.memory.read(str_ptr, str_len)?;
                 let path = String::from_utf8_lossy(&str_bytes);
+                kernel_log!("open(2) {path}");
                 let file_descriptor = self.open_file(&path)?;
                 self.system.push(file_descriptor)?;
                 Ok(())
             }
             0x02 => {
                 // file write
-                kernel_log!("write");
+                kernel_log!("write(3)");
                 let buf_len = self.system.pop()?;
                 let buf_ptr = self.system.pop()?;
                 let file_descriptor = self.system.pop()?;
@@ -76,8 +78,13 @@ impl Kernel {
             }
             0x03 => {
                 //file read
-                kernel_log!("read");
-                todo!()
+                kernel_log!("read(3)");
+                let n = self.system.pop()?;
+                let ptr = self.system.pop()?;
+                let fd = self.system.pop()?;
+                let buf = self.read_file(fd, n)?;
+                self.system.memory.write(ptr, &buf)?;
+                Ok(())
             }
             0x04 => {
                 //file seek
@@ -111,14 +118,14 @@ impl Kernel {
             }
             0x0a => {
                 // malloc
-                kernel_log!("malloc");
+                kernel_log!("malloc(1)");
                 let size = self.system.pop()?;
                 let ptr = self.system.memory.malloc(size)?;
                 self.system.push(ptr)
             }
             0x0b => {
                 // realloc
-                kernel_log!("realloc");
+                kernel_log!("realloc(2)");
                 let new_size = self.system.pop()?;
                 let ptr = self.system.pop()?;
                 let new_ptr = self.system.memory.realloc(ptr, new_size)?;
@@ -126,37 +133,75 @@ impl Kernel {
             }
             0x0c => {
                 // free
-                kernel_log!("free");
+                kernel_log!("free(1)");
                 let ptr = self.system.pop()?;
                 self.system.memory.free(ptr)
             }
             0x0d => {
                 // memcpy
-                kernel_log!("memcpy");
-                let src = self.system.pop()?;
+                kernel_log!("memcpy(3)");
                 let n = self.system.pop()?;
+                let src = self.system.pop()?;
                 let dest = self.system.pop()?;
                 self.system.memory.memcpy(dest, src, n)
             }
             0x0e => {
                 // memset
-                kernel_log!("memset");
-                let src = self.system.pop()?;
+                kernel_log!("memset(3)");
                 let n = self.system.pop()?;
+                let src = self.system.pop()?;
                 let dest = self.system.pop()?;
                 self.system.memory.memset(dest, src as u8, n)
             }
-
-            _ => todo!(),
+            0x0f => {
+                kernel_log!("init_fb(3)");
+                if let Some(mut gpu) = self.gpu.as_mut() {
+                    gpu.free_fb();
+                }
+                let mode = self.system.pop()?;
+                let height = self.system.pop()?;
+                let width = self.system.pop()?;
+                let frame_buffer_ptr = self.system.pop()?;
+                self.gpu = Some(GPU::new(
+                    frame_buffer_ptr,
+                    width as u32,
+                    height as u32,
+                    mode as u8,
+                )?);
+                Ok(())
+            }
+            0x10 => {
+                kernel_log!("draw_fb(0)");
+                self.gpu_fb_refresh()
+            }
+            0x11 => {
+                kernel_log!("get_fb_ptr(0)");
+                if let Some(gpu) = self.gpu.as_ref() {
+                    self.system.push(gpu.stdmem_frame_buffer_ptr)?;
+                }
+                Ok(())
+            }
+            0x12 => {
+                kernel_log!("get_file_length(1)");
+                let file_descriptor = self.system.pop()?;
+                let metadata = self.stat_file(file_descriptor)?;
+                self.system.push(metadata.len())
+            }
+            0x13 => {
+                kernel_log!("dump(0)");
+                self.core_dump()
+            }
+            _ => panic!("unexpected interrupt {code:#x}"),
         }
     }
 
     pub fn run(&mut self) -> Result<(), ExecutionError> {
         loop {
+            // self.gpu_fb_refresh()?;
             self.system.step()?;
             match self.system.pending_interrupt {
                 0x00 => continue,
-                0xff => break,
+                0x14 => break,
                 _ => {
                     // kernel_log!("decoding {:#x}", self.system.pending_interrupt);
                     self.handle_interrupt(self.system.pending_interrupt)?;
@@ -164,24 +209,30 @@ impl Kernel {
                 }
             }
         }
-        self.gpu_fb_refresh()?;
 
         if let Some(gpu) = self.gpu.as_mut() {
             loop {
-                gpu.handle_responsive()?;
+                if gpu.quit_loop() {
+                    break;
+                }
             }
         }
         Ok(())
     }
     pub fn gpu_fb_refresh(&mut self) -> Result<(), ExecutionError> {
-        let gpu = self.gpu.as_mut().unwrap();
+        // let gpu = self.gpu.as_mut().unwrap();
         // let frame_buffer = self
         //     .system
         //     .memory
         //     .read(gpu.stdmem_frame_buffer_ptr, gpu.fb_size)?;
-        let frame_buffer = &self.system.memory.physical[gpu.stdmem_frame_buffer_ptr as usize
-            ..(gpu.stdmem_frame_buffer_ptr + gpu.fb_size) as usize];
-        gpu.draw(frame_buffer)?;
+        if let Some(gpu) = self.gpu.as_mut() {
+            let end_addr = gpu.stdmem_frame_buffer_ptr as usize + gpu.fb_size as usize;
+            let frame_buffer =
+                &self.system.memory.physical[gpu.stdmem_frame_buffer_ptr as usize..end_addr];
+            gpu.draw(frame_buffer)?;
+        } else {
+            kernel_log!("refresh call ignored: gpu not initialized");
+        }
         Ok(())
     }
     pub fn core_dump(&mut self) -> Result<(), ExecutionError> {
@@ -216,12 +267,13 @@ impl Kernel {
         Ok(self.next_fd - 1)
     }
     fn read_file(&mut self, file_descriptor: u64, n: u64) -> Result<Vec<u8>, ExecutionError> {
-        let interface = self.get_interface(file_descriptor)?;
-        interface.read(n)
+        self.get_interface(file_descriptor)?.read(n)
     }
     fn write_file(&mut self, file_descriptor: u64, buffer: &[u8]) -> Result<(), ExecutionError> {
-        let interface = self.get_interface(file_descriptor)?;
-        interface.write(buffer)
+        self.get_interface(file_descriptor)?.write(buffer)
+    }
+    fn stat_file(&mut self, file_descriptor: u64) -> Result<Metadata, ExecutionError> {
+        self.get_interface(file_descriptor)?.stat()
     }
     fn close_file(&mut self, file_descriptor: u64) -> Result<(), ExecutionError> {
         if file_descriptor < 4 {
@@ -242,7 +294,7 @@ enum IOInterface {
 }
 impl IOInterface {
     fn read(&mut self, n: u64) -> Result<Vec<u8>, ExecutionError> {
-        let mut buffer = Vec::with_capacity(n as usize);
+        let mut buffer = vec![0; n as usize];
         let bytes_read = match self {
             IOInterface::Stdin(stdin) => stdin.read(&mut buffer),
             IOInterface::Stdout(_) => {
@@ -255,10 +307,11 @@ impl IOInterface {
         }
         .map_err(|e| ExecutionError::new(format!("failed to read from io stream: `{e}`")))?;
         if bytes_read != n as usize {
-            return Err(ExecutionError::new(format!("incomplete read from reader")));
+            return Err(ExecutionError::new(format!("incomplete read from reader attempted to read {n} bytes but only read back {bytes_read}\n{buffer:#?}")));
         } else {
             Ok(buffer)
         }
+        // Ok(buffer)
     }
     fn write(&mut self, buffer: &[u8]) -> Result<(), ExecutionError> {
         match self {
@@ -286,5 +339,24 @@ impl IOInterface {
             IOInterface::File(file) => file.seek_relative(offset),
         }
         .map_err(|e| ExecutionError::new(format!("failed to seek io stream: `{e}`")))
+    }
+    fn stat(&mut self) -> Result<Metadata, ExecutionError> {
+        match self {
+            IOInterface::Stdin(stdin) => {
+                return Err(ExecutionError::new(format!("cannot seek stdin")))
+            }
+
+            IOInterface::Stdout(stdout) => {
+                return Err(ExecutionError::new(format!("cannot stat stdout")))
+            }
+
+            IOInterface::Stderr(stderr) => {
+                return Err(ExecutionError::new(format!("cannot stat stderr")))
+            }
+
+            IOInterface::File(file) => file
+                .metadata()
+                .map_err(|e| ExecutionError::new(format!("failed to stat io stream: `{e}`"))),
+        }
     }
 }

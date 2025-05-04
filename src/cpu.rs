@@ -509,7 +509,7 @@ impl CPU {
             },
             0xfd => todo!(),
             0xff => todo!(),
-            _ => panic!("unrecognized opcode"),
+            _ => panic!("unrecognized opcode {opcode:#x}"),
         };
         Ok(operation)
     }

@@ -60,7 +60,7 @@ fn main() {
 }
 
 fn real_main() -> Result<(), ExecutionError> {
-    let mut kernel = Kernel::new(10_000, 10_000);
+    let mut kernel = Kernel::new(70_000, 1_0000);
     kernel.system.load("nisvc.out")?;
     // kernel.gpu.as_mut().unwrap().renderer.present();
     match kernel.run() {
@@ -71,7 +71,7 @@ fn real_main() -> Result<(), ExecutionError> {
             println!("{e}");
         }
     };
-    kernel.core_dump()?;
+    // kernel.core_dump()?;
     Ok(())
 }
 

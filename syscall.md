@@ -16,10 +16,12 @@
 - 0x0f **[init_fb(4)](#init_fb)**
 - 0x10 **[draw_fb(0)](#draw_fb)**
 - 0x11 **[get_fb_ptr(0)](#get_fb_ptr)**
-- 0x12 **[video_mode_switch(1)](#video_mode_switch)**
-
+- 0x12 **[get_file_size(1)](#get_file_size)**
+- 0x13 **[dump(0)](#dump)**
+- 0x14 **[kill(0)](#kill)**
 # open
-C notation
+1Interrupt Code: `0x01`
+## C notation
 ```c
 int open(int str_ptr, int str_len);
 ```
@@ -42,7 +44,18 @@ pop r1 # file_descriptor
 ```
 
 # write
+Interrupt Code: 0x2
+## C Notation
+```c
+void write(uint64_t fd, void* buffer, void* n);
+```
+
 # read
+Interrupt Code: 0x3
+```c
+void read(uint64_t fd, void* buffer, void* n);
+```
+
 # seek
 # close
 # runtime_silence_switch
@@ -50,12 +63,57 @@ pop r1 # file_descriptor
 # raw_tty_switch
 # tty_rel_cursor
 # tty_abs_cursor
+
 # malloc
+## C Notation
+```c
+void *malloc(uint64_t size)
+```
+
 # realloc
+## C Notation
+```c
+void *realloc(void *ptr, uint64_t size)
+```
+
 # free
 # memcpy
+## C Notation
+```c
+void memcpy(void* dest,void* src, uint64_t n)
+```
+
 # memset
+## C Notation
+```c
+void memset(void* dest,  uint8_t byte, uint64_t n)
+```
+
 # init_fb
+## C notation
+
+```c
+void init_fb(int frame_buffer_ptr, int width, int height, int mode);
+```
+
+## arguments
+- frame_buffer
+> pointer to start of userspace framebuffer
+- width
+> width of display in bytes
+- height
+> height of display in bytes
+- mode
+> enumerated mode
+>- 0
+>> 8bpp greyscale ascii text mode
+>- 1
+>> 8bpp greyscale
+>- 2
+>> 8bpp rgb
+>- 3
+>> 24bpp rgb
+
 # draw_fb
 # get_fb_ptr
 get pointer to start of the framebuffer
@@ -79,3 +137,15 @@ switch kernel framebuffer rendering mode
 >>raw bpp pixel data
 > - 1
 >>ascii text mode
+# get_file_size
+returns size of a file in bytes
+## Arguments
+- file_descriptor
+## Returns
+- file size in bytes
+
+# dump
+dump core to file in cwd on host
+
+# kill
+immediately kill execution
