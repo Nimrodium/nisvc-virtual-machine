@@ -1,3 +1,6 @@
 /target
-nisvc.core
+nisvc.core*
+*.data*
+
+*.bin
 nisvc.out

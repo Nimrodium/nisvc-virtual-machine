@@ -12,10 +12,10 @@ mod opcode;
 use std::fmt;
 
 // use colorize::AnsiColor;
+use crate::constant::NAME;
+use clap::Parser;
 use crossterm::style::Stylize;
 use kernel::{Kernel, SILENCE_KERNEL};
-
-use crate::constant::NAME;
 
 struct ExecutionError {
     error: String,
@@ -46,13 +46,17 @@ static mut VERBOSE_FLAG: usize = 0;
 static mut OUTPUT_FLAG: bool = false;
 static mut INPUT_FLAG: bool = false;
 
-fn main() {
-    // let mut cpu = CPU::new(10_000, 10_000);
-    // match cpu.load("placeholder") {
-    //     Ok(()) => (),
-    //     Err(e) => println!("{e}"),
-    // };
+#[derive(Parser)]
+struct Args {
+    #[arg()]
+    program: String,
+    #[arg(short, long, default_value_t = 0)]
+    verbosity: usize,
+    #[arg(short, long, default_value_t = false)]
+    disassemble: bool,
+}
 
+fn main() {
     match real_main() {
         Ok(()) => (),
         Err(e) => println!("{e}"),
@@ -60,8 +64,14 @@ fn main() {
 }
 
 fn real_main() -> Result<(), ExecutionError> {
-    let mut kernel = Kernel::new(70_000, 1_0000);
-    kernel.system.load("nisvc.out")?;
+    let args = Args::parse();
+    unsafe {
+        DISASSEMBLE = args.disassemble;
+        VERBOSE_FLAG = args.verbosity;
+    }
+
+    let mut kernel = Kernel::new(1_000_000, 1_0000);
+    kernel.system.load(&args.program)?;
     // kernel.gpu.as_mut().unwrap().renderer.present();
     match kernel.run() {
         Ok(()) => (),

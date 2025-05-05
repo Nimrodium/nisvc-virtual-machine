@@ -18,7 +18,7 @@
 - 0x11 **[get_fb_ptr(0)](#get_fb_ptr)**
 - 0x12 **[get_file_size(1)](#get_file_size)**
 - 0x13 **[dump(0)](#dump)**
-- 0x14 **[kill(0)](#kill)**
+- 0x14 **[kill(0)](#kill)** 
 # open
 1Interrupt Code: `0x01`
 ## C notation
@@ -37,8 +37,8 @@ opens a file from the host fs from the file path string
 
 ## example
 ```asm
-pushc $!str
-pushc $!len
+pushi $!str
+pushi $!len
 int $x01
 pop r1 # file_descriptor
 ```
@@ -57,39 +57,49 @@ void read(uint64_t fd, void* buffer, void* n);
 ```
 
 # seek
+Interrupt Code: 0x4
 # close
+Interrupt Code: 0x5
 # runtime_silence_switch
-
+Interrupt Code: 0x6
 # raw_tty_switch
+Interrupt Code: 0x7
 # tty_rel_cursor
+Interrupt Code: 0x8
 # tty_abs_cursor
-
+Interrupt Code: 0x9
 # malloc
+Interrupt Code: 0xa
 ## C Notation
 ```c
 void *malloc(uint64_t size)
 ```
 
 # realloc
+Interrupt Code: 0xb
 ## C Notation
 ```c
 void *realloc(void *ptr, uint64_t size)
 ```
 
 # free
+Interrupt Code: 0xc
 # memcpy
+Interrupt Code: 0xd
 ## C Notation
 ```c
 void memcpy(void* dest,void* src, uint64_t n)
 ```
 
 # memset
+Interrupt Code: 0xe
 ## C Notation
 ```c
 void memset(void* dest,  uint8_t byte, uint64_t n)
 ```
 
 # init_fb
+Interrupt Code: 0xf
 ## C notation
 
 ```c
@@ -97,6 +107,7 @@ void init_fb(int frame_buffer_ptr, int width, int height, int mode);
 ```
 
 ## arguments
+
 - frame_buffer
 > pointer to start of userspace framebuffer
 - width
@@ -104,18 +115,12 @@ void init_fb(int frame_buffer_ptr, int width, int height, int mode);
 - height
 > height of display in bytes
 - mode
-> enumerated mode
->- 0
->> 8bpp greyscale ascii text mode
->- 1
->> 8bpp greyscale
->- 2
->> 8bpp rgb
->- 3
->> 24bpp rgb
+
 
 # draw_fb
+Interrupt Code: 0x10
 # get_fb_ptr
+Interrupt Code: 0x11
 get pointer to start of the framebuffer
 ## returns
 - fb_ptr
@@ -128,16 +133,9 @@ ldi r2b1,$1
 store r1,r2b1,r2b1 # write top pixel as 1
 int $x10 #refresh
 ```
-# video_mode_switch
-switch kernel framebuffer rendering mode
-## arguments
-- mode
-> enumerated switch
-> - 0
->>raw bpp pixel data
-> - 1
->>ascii text mode
+
 # get_file_size
+Interrupt Code: 0x12
 returns size of a file in bytes
 ## Arguments
 - file_descriptor
@@ -145,7 +143,9 @@ returns size of a file in bytes
 - file size in bytes
 
 # dump
+Interrupt Code: 0x13
 dump core to file in cwd on host
 
 # kill
+Interrupt Code: 0x14
 immediately kill execution

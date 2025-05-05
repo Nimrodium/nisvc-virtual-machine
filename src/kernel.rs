@@ -20,6 +20,7 @@ pub struct Kernel {
     breakpoint_vector: Vec<u64>,
     file_descriptor_vector: HashMap<u64, IOInterface>,
     next_fd: u64,
+    cores_dumped: usize,
     // frame_buffer_ptr: u64,
 }
 impl Kernel {
@@ -41,7 +42,7 @@ impl Kernel {
             breakpoint_vector: Vec::new(),
             file_descriptor_vector,
             next_fd: 3,
-            // frame_buffer_ptr:None,
+            cores_dumped: 0, // frame_buffer_ptr:None,
         }
     }
 
@@ -191,7 +192,11 @@ impl Kernel {
                 kernel_log!("dump(0)");
                 self.core_dump()
             }
-            _ => panic!("unexpected interrupt {code:#x}"),
+            _ => {
+                return Err(ExecutionError::new(format!(
+                    "unexpected interrupt {code:#x}"
+                )))
+            }
         }
     }
 
@@ -237,12 +242,13 @@ impl Kernel {
     }
     pub fn core_dump(&mut self) -> Result<(), ExecutionError> {
         const CORE: &str = "nisvc.core";
-        let mut core_file = File::create(CORE)
+        let mut core_file = File::create(format!("{CORE}.{}", self.cores_dumped))
             .map_err(|e| ExecutionError::new(format!("failed to dump core: {e}")))?;
         core_file
             .write_all(&self.system.memory.physical)
             .map_err(|e| ExecutionError::new(format!("failed to dump core: {e}")))?;
         println!("{}", "core dumped".on_red());
+        self.cores_dumped += 1;
         Ok(())
     }
 
