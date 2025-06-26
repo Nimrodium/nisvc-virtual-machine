@@ -4,6 +4,7 @@
 mod bridge;
 mod constant;
 mod cpu;
+mod debug_shell;
 mod gpu;
 mod kernel;
 mod loader;
@@ -54,12 +55,21 @@ struct Args {
     verbosity: usize,
     #[arg(short, long, default_value_t = false)]
     disassemble: bool,
+    #[arg(long)]
+    debug: bool,
+    #[arg(long)]
+    bkoffset: Option<String>,
+    #[arg(long)]
+    heap: Option<u64>,
+    #[arg(long)]
+    stack: Option<u64>,
+    cmdline: Vec<String>,
 }
 
 fn main() {
     match real_main() {
         Ok(()) => (),
-        Err(e) => println!("{e}"),
+        Err(e) => unsafe { println!("INTERNAL FAULT @ PC{GLOBAL_PROGRAM_COUNTER}: {e}") },
     }
 }
 
@@ -70,7 +80,23 @@ fn real_main() -> Result<(), ExecutionError> {
         VERBOSE_FLAG = args.verbosity;
     }
 
-    let mut kernel = Kernel::new(1_000_000, 1_0000);
+    let heap = if let Some(heap) = args.heap {
+        heap
+    } else {
+        1_000_000
+    };
+    let stack = if let Some(stack) = args.stack {
+        stack
+    } else {
+        1_0000
+    };
+    let cmdline = {
+        let mut cmdline = vec![args.program.clone()];
+        cmdline.extend(args.cmdline.clone());
+        cmdline
+    };
+    println!("cmdline: {:?}", cmdline);
+    let mut kernel = Kernel::new(args.cmdline, heap, stack);
     kernel.system.load(&args.program)?;
     // kernel.gpu.as_mut().unwrap().renderer.present();
     match kernel.run() {
@@ -101,7 +127,7 @@ fn _kernel_log(msg: &str) {
         if !SILENCE_KERNEL {
             println!(
                 "{}: {}",
-                format!("{GLOBAL_PROGRAM_COUNTER:0>4x} NFK:").on_dark_blue(),
+                format!("{GLOBAL_PROGRAM_COUNTER:0>4x} NKS:").on_dark_blue(),
                 msg
             )
         }

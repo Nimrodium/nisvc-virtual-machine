@@ -1,11 +1,8 @@
-use core::fmt;
 use std::{
-    collections::HashMap,
     fs::File,
-    io::{Read, Seek, Stderr, Stdin, Stdout, Write},
+    io::Read,
     mem::transmute,
-    ops::{Neg, Shl, Shr},
-    process::exit,
+    ops::{Shl, Shr},
 };
 
 pub type RegHandle = u8;
@@ -13,13 +10,12 @@ pub type RegHandle = u8;
 use crossterm::style::Stylize;
 
 use crate::{
-    constant::{FRAME_POINTER, PROGRAM_COUNTER, STACK_POINTER, STACK_SIZE, UNINITIALIZED_REGISTER},
+    constant::{FRAME_POINTER, PROGRAM_COUNTER, STACK_POINTER, UNINITIALIZED_REGISTER},
     loader::NISVCEF,
-    log_disassembly, log_input, log_output,
+    log_disassembly,
     memory::{bytes_to_u64, Memory},
     opcode::Operation,
-    verbose_println, very_verbose_println, very_very_verbose_println, ExecutionError,
-    GLOBAL_PROGRAM_COUNTER,
+    very_verbose_println, ExecutionError, GLOBAL_PROGRAM_COUNTER,
 };
 
 #[derive(Clone)]
@@ -222,11 +218,11 @@ impl CPURegisters {
         Self { registers }
     }
 
-    pub fn get_register(&self, idx: u8) -> &Register {
+    fn get_register(&self, idx: RegHandle) -> &Register {
         &self.registers[idx as usize]
     }
 
-    pub fn get_mut_register(&mut self, idx: u8) -> &mut Register {
+    fn get_mut_register(&mut self, idx: RegHandle) -> &mut Register {
         &mut self.registers[idx as usize]
     }
     pub fn read(&mut self, register_handle: RegHandle) -> u64 {
@@ -241,21 +237,25 @@ impl CPURegisters {
     pub fn print(&mut self, register_handle: RegHandle) -> String {
         let (idx, window) = decode_register(register_handle);
         let name = self.get_register(idx).name(window);
+        let val = self.read(register_handle);
         format!(
             "{}{}",
             name.red(),
-            format!("(0x{:0>2x})", self.read(register_handle)).dark_blue()
+            format!("(0x{:0>2x}|{})", val, val).dark_blue()
         )
     }
     pub fn print_float(&mut self, register_handle: RegHandle) -> String {
-        todo!()
+        let (idx, window) = decode_register(register_handle);
+        let name = self.get_register(idx).name(window);
+        let val: f64 = unsafe { transmute(self.read(register_handle)) };
+        format!("{}{}", name.red(), format!("(0x{:0>2})", val).dark_blue())
     }
 }
 
 pub struct CPU {
     pub registers: CPURegisters,
     pub memory: Memory,
-    pub vm_host_bridge: VMHostBridge,
+    // pub vm_host_bridge: VMHostBridge,
     pub pending_interrupt: u8,
 }
 
@@ -264,7 +264,7 @@ impl CPU {
         Self {
             registers: CPURegisters::new(),
             memory: Memory::new(heap, stack),
-            vm_host_bridge: VMHostBridge::new(),
+            // vm_host_bridge: VMHostBridge::new(),
             pending_interrupt: 0,
         }
     }
@@ -418,51 +418,6 @@ impl CPU {
                 addr: self.consume_constant()?,
             },
             0x1b => Operation::Ret,
-            // 0x1e => Operation::Fopen {
-            //     dest_fd: self.consume_byte()?,
-            //     file_path_str_ptr: self.consume_byte()?,
-            //     file_path_str_len: self.consume_byte()?,
-            // },
-            // 0x1f => Operation::Fread {
-            //     fd: self.consume_byte()?,
-            //     buf_ptr: self.consume_byte()?,
-            //     buf_len: self.consume_byte()?,
-            // },
-            // 0x20 => Operation::Fwrite {
-            //     fd: self.consume_byte()?,
-            //     buf_ptr: self.consume_byte()?,
-            //     buf_len: self.consume_byte()?,
-            // },
-            // 0x21 => Operation::Fseek {
-            //     fd: self.consume_byte()?,
-            //     seek: self.consume_byte()?,
-            //     direction: self.consume_byte()?,
-            // },
-            // 0x22 => Operation::Fclose {
-            //     fd: self.consume_byte()?,
-            // },
-            // 0x23 => Operation::Malloc {
-            //     dest_ptr: self.consume_byte()?,
-            //     size: self.consume_byte()?,
-            // },
-            // 0x24 => Operation::Realloc {
-            //     dest_ptr: self.consume_byte()?,
-            //     ptr: self.consume_byte()?,
-            //     new_size: self.consume_byte()?,
-            // },
-            // 0x25 => Operation::Free {
-            //     ptr: self.consume_byte()?,
-            // },
-            // 0x26 => Operation::Memset {
-            //     dest: self.consume_byte()?,
-            //     n: self.consume_byte()?,
-            //     value: self.consume_byte()?,
-            // },
-            // 0x27 => Operation::Memcpy {
-            //     dest: self.consume_byte()?,
-            //     n: self.consume_byte()?,
-            //     src: self.consume_byte()?,
-            // },
             0x1c => Operation::Itof {
                 destf: self.consume_byte()?,
                 srci: self.consume_byte()?,
@@ -601,7 +556,7 @@ impl CPU {
                 );
             }
             Operation::Div { dest, op1, op2 } => {
-                let op1_val = self.registers.read(op1);
+                // let op1_val = self.registers.read(op1);
                 let op2_val = self.registers.read(op2);
                 if op2_val == 0 {
                     return Err(ExecutionError::new(format!(
@@ -1046,218 +1001,5 @@ impl CPU {
             stack_dump.push(popped);
         }
         stack_dump
-    }
-}
-
-pub enum Kind {
-    Register,
-    MutableRegister,
-    Immediate,
-    Address,
-}
-
-pub struct DecodedInstruction {
-    pub immutable_registers: Vec<Register>,
-    pub mutable_registers: Vec<u8>,
-
-    pub addresses: Vec<u64>,
-    pub immediates: Vec<u64>,
-}
-
-type VMFD = u64;
-pub struct VMHostBridge {
-    stdin: Stdin,
-    stdout: Stdout,
-    stderr: Stderr,
-    open_file_vector: HashMap<VMFD, (File, String)>,
-    next_vmfd: VMFD,
-}
-
-// bridge isa
-// fopen fd_store filep_ptr filep_len
-// fwrite fd str_ptr str_len
-// fread fd buf_ptr buf_len
-// fclose fd
-
-impl VMHostBridge {
-    fn new() -> Self {
-        // setup stdin & stdout
-        let stdin = std::io::stdin();
-        let stdout = std::io::stdout();
-        let stderr = std::io::stderr();
-        Self {
-            stdin,
-            stdout,
-            stderr,
-            open_file_vector: HashMap::new(),
-            next_vmfd: 3,
-        }
-    }
-    fn get_file_from_vmfd(&mut self, vmfd: VMFD) -> Result<&mut (File, String), ExecutionError> {
-        let open_files = self.open_file_vector.len();
-        match self.open_file_vector.get_mut(&vmfd) {
-            Some(f) => Ok(f),
-            None => Err(ExecutionError::new(format!(
-                "vmfd-{vmfd} does not exist, there are {} open files",
-                open_files
-            ))),
-        }
-    }
-    pub fn fopen(&mut self, file_path: &str) -> Result<VMFD, ExecutionError> {
-        let file = match File::open(file_path) {
-            Ok(file) => file,
-            Err(why) => {
-                return Err(ExecutionError::new(format!(
-                    "failed to open host file {file_path} :: {why}"
-                )))
-            }
-        };
-        let vmfd = self.next_vmfd;
-        self.next_vmfd += 1;
-
-        self.open_file_vector
-            .insert(vmfd, (file, file_path.to_string()));
-
-        verbose_println!("opened file {file_path} as vmfd-{vmfd}");
-        Ok(vmfd)
-    }
-    pub fn fclose(&mut self, vmfd: VMFD) -> Result<(), ExecutionError> {
-        match vmfd {
-            0 => return Err(ExecutionError::new(format!("cannot close stdin"))),
-            1 => return Err(ExecutionError::new(format!("cannot cloes stdout"))),
-            2 => return Err(ExecutionError::new(format!("cannot close stderr"))),
-            _ => {
-                // let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
-                let (file, file_path) = match self.open_file_vector.remove(&vmfd) {
-                    Some(entry) => entry,
-                    None => {
-                        return Err(ExecutionError::new(format!(
-                            "{vmfd} is not an open file handle"
-                        )))
-                    }
-                };
-                drop(file);
-                verbose_println!("closed vmfd-{vmfd} :: {file_path}");
-                Ok(())
-            }
-        }
-    }
-    pub fn fwrite(&mut self, vmfd: VMFD, buf: &[u8]) -> Result<(), ExecutionError> {
-        match vmfd {
-            0 => return Err(ExecutionError::new(format!("cannot write to stdin"))),
-            1 => match self.stdout.write_all(buf) {
-                Ok(_) => Ok(()),
-                Err(e) => {
-                    return Err(ExecutionError::new(format!(
-                        "failed to write to stdout :: {e}"
-                    )))
-                }
-            },
-            2 => match self.stderr.write_all(buf) {
-                Ok(_) => Ok(()),
-                Err(e) => {
-                    return Err(ExecutionError::new(format!(
-                        "failed to write to stderr :: {e}"
-                    )))
-                }
-            },
-            _ => {
-                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
-                match file.write_all(buf) {
-                    Ok(_) => Ok(()),
-
-                    Err(e) => {
-                        return Err(ExecutionError::new(format!(
-                            "failed to write to {file_path} :: {e}"
-                        )))
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn fread(&mut self, vmfd: VMFD, length: usize) -> Result<Vec<u8>, ExecutionError> {
-        let mut buf: Vec<u8> = vec![0u8; length];
-        match vmfd {
-            0 => match self.stdin.read(&mut buf) {
-                Ok(bytes_read) => (),
-                Err(e) => {
-                    return Err(ExecutionError::new(format!(
-                        "failed to read from stdin :: {e}"
-                    )))
-                }
-            },
-            1 => return Err(ExecutionError::new(format!("cannot read from stdout"))),
-            2 => return Err(ExecutionError::new(format!("cannot read from stderr"))),
-            _ => {
-                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
-                match file.read(&mut buf) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        return Err(ExecutionError::new(format!(
-                            "failed to read from {file_path} :: {e}"
-                        )))
-                    }
-                }
-            }
-        };
-        Ok(buf)
-    }
-
-    pub fn fseek(
-        &mut self,
-        vmfd: VMFD,
-        amount: usize,
-        direction: u8,
-    ) -> Result<(), ExecutionError> {
-        let offset: i64 = if direction == 1 {
-            amount as i64 * -1
-        } else if direction == 0 {
-            amount as i64
-        } else {
-            return Err(ExecutionError::new(format!("invalid seek direction")));
-        };
-        match vmfd {
-            0 => return Err(ExecutionError::new(format!("cannot seek stdin"))),
-            1 => return Err(ExecutionError::new(format!("cannot seek stdout"))),
-            2 => return Err(ExecutionError::new(format!("cannot seek stderr"))),
-            _ => {
-                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
-                match file.seek_relative(offset) {
-                    Ok(_) => Ok(()),
-
-                    Err(e) => {
-                        return Err(ExecutionError::new(format!(
-                            "failed to write to {file_path} :: {e}"
-                        )))
-                    }
-                }
-            }
-        }
-    }
-    pub fn ftell(&mut self, vmfd: VMFD) -> Result<usize, ExecutionError> {
-        match vmfd {
-            0 => return Err(ExecutionError::new(format!("cannot tell stdin"))),
-            1 => return Err(ExecutionError::new(format!("cannot tell stdout"))),
-            2 => return Err(ExecutionError::new(format!("cannot tell stderr"))),
-            _ => {
-                let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
-                match file.stream_position() {
-                    Ok(pos) => Ok(pos as usize),
-                    Err(err) => Err(ExecutionError::new(format!(
-                        "failed to read stream position of vmfd-{vmfd} :: {err}"
-                    ))),
-                }
-            }
-        }
-    }
-    pub fn exit(code: i32) -> ! {
-        exit(code)
-    }
-    pub fn sleep(ns: u64) {
-        todo!()
-    }
-    pub fn get_system_time() -> usize {
-        todo!()
     }
 }

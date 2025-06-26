@@ -18,7 +18,9 @@
 - 0x11 **[get_fb_ptr(0)](#get_fb_ptr)**
 - 0x12 **[get_file_size(1)](#get_file_size)**
 - 0x13 **[dump(0)](#dump)**
-- 0x14 **[kill(0)](#kill)** 
+- 0x14 **[kill(0)](#kill)**
+- 0x15 **[get_argc(0)](#get_argc)**
+- 0x16 **[get_argv(1)](#get_argv)**
 # open
 1Interrupt Code: `0x01`
 ## C notation
@@ -149,3 +151,11 @@ dump core to file in cwd on host
 # kill
 Interrupt Code: 0x14
 immediately kill execution
+
+# get_argc
+Interrupt Code: 0x15
+get argc; number of arguments in cmdline
+
+# get_argv
+Interrupt Code: 0x16
+get argument from cmdline at index

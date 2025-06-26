@@ -19,12 +19,13 @@ pub struct Kernel {
     user_interrupt_vector: [u64; 205],
     breakpoint_vector: Vec<u64>,
     file_descriptor_vector: HashMap<u64, IOInterface>,
+    cmdline: Vec<String>,
     next_fd: u64,
     cores_dumped: usize,
     // frame_buffer_ptr: u64,
 }
 impl Kernel {
-    pub fn new(heap: u64, stack: u64) -> Self {
+    pub fn new(cmdline: Vec<String>, heap: u64, stack: u64) -> Self {
         let mut file_descriptor_vector = HashMap::new();
         file_descriptor_vector.insert(0, IOInterface::Stdin(stdin()));
         file_descriptor_vector.insert(1, IOInterface::Stdout(stdout()));
@@ -43,6 +44,7 @@ impl Kernel {
             file_descriptor_vector,
             next_fd: 3,
             cores_dumped: 0, // frame_buffer_ptr:None,
+            cmdline,
         }
     }
 
@@ -94,8 +96,11 @@ impl Kernel {
             }
             0x05 => {
                 // file close
-                kernel_log!("close");
-                todo!()
+
+                let fd = self.system.pop()?;
+                kernel_log!("close({fd})");
+                self.close_file(fd)?;
+                Ok(())
             }
             0x06 => {
                 // silence print
@@ -196,6 +201,28 @@ impl Kernel {
                 return Err(ExecutionError::new(format!(
                     "unexpected interrupt {code:#x}"
                 )))
+            }
+            0x15 => {
+                kernel_log!("arg_argc");
+                self.system.push(self.cmdline.len() as u64)?;
+                Ok(())
+            }
+            0x16 => {
+                let arg_idx = self.system.pop()?;
+                kernel_log!("get_argv({arg_idx})");
+                let arg = self
+                    .cmdline
+                    .get(arg_idx as usize)
+                    .ok_or(ExecutionError::new(format!(
+                        "argv[{arg_idx}] out of bounds; argc: {}",
+                        self.cmdline.len()
+                    )))?;
+                let len = arg.len() as u64;
+                let ptr = self.system.memory.malloc(len)?;
+                self.system.memory.write(ptr, arg.as_bytes())?;
+                self.system.push(ptr)?;
+                self.system.push(len)?;
+                Ok(())
             }
         }
     }

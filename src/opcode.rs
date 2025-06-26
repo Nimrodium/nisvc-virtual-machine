@@ -1,4 +1,4 @@
-use crate::cpu::{Kind, RegHandle};
+use crate::cpu::RegHandle;
 #[derive(Debug)]
 pub enum Operation {
     Nop,
