@@ -4,3 +4,4 @@ nisvc.core*
 
 *.bin
 nisvc.out
+!.gitignore

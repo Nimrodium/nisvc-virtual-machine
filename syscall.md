@@ -111,7 +111,7 @@ void init_fb(int frame_buffer_ptr, int width, int height, int mode);
 ## arguments
 
 - frame_buffer
-> pointer to start of userspace framebuffer
+> pointer to start of shared framebuffer
 - width
 > width of display in bytes
 - height
@@ -158,4 +158,11 @@ get argc; number of arguments in cmdline
 
 # get_argv
 Interrupt Code: 0x16
-get argument from cmdline at index
+get argument from cmdline at index </br>
+
+## Returns
+- pointer
+- length
+
+## notes
+the supervisor copies the argument string into dynamically allocated guest memory, for proper memory management this pointer should be explicitly freed after use

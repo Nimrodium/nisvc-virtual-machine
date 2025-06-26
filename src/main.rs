@@ -1,7 +1,6 @@
 // nisvc virtual machine rewrite
 #![allow(static_mut_refs)]
 
-mod bridge;
 mod constant;
 mod cpu;
 mod debug_shell;
@@ -44,8 +43,8 @@ static mut GLOBAL_PROGRAM_COUNTER: u64 = 0;
 
 static mut DISASSEMBLE: bool = true;
 static mut VERBOSE_FLAG: usize = 0;
-static mut OUTPUT_FLAG: bool = false;
-static mut INPUT_FLAG: bool = false;
+// static mut OUTPUT_FLAG: bool = false;
+// static mut INPUT_FLAG: bool = false;
 
 #[derive(Parser)]
 struct Args {
@@ -134,21 +133,21 @@ fn _kernel_log(msg: &str) {
     }
 }
 
-fn _log_output(msg: &str) {
-    unsafe {
-        if OUTPUT_FLAG {
-            println!("{NAME}: {GLOBAL_CLOCK:0>4x}: {} {}", "output:".blue(), msg)
-        }
-    }
-}
+// fn _log_output(msg: &str) {
+//     unsafe {
+//         if OUTPUT_FLAG {
+//             println!("{NAME}: {GLOBAL_CLOCK:0>4x}: {} {}", "output:".blue(), msg)
+//         }
+//     }
+// }
 
-fn _log_input(msg: &str) {
-    unsafe {
-        if INPUT_FLAG {
-            println!("{NAME}: {GLOBAL_CLOCK:0>4x}: {} {}", "input: ".blue(), msg)
-        }
-    }
-}
+// fn _log_input(msg: &str) {
+//     unsafe {
+//         if INPUT_FLAG {
+//             println!("{NAME}: {GLOBAL_CLOCK:0>4x}: {} {}", "input: ".blue(), msg)
+//         }
+//     }
+// }
 
 fn _verbose_println(msg: &str) {
     unsafe {
@@ -194,15 +193,15 @@ macro_rules! kernel_log {
     ($($arg:tt)*) => (crate::_kernel_log(&format!($($arg)*)));
 }
 
-#[macro_export]
-macro_rules! log_output {
-    ($($arg:tt)*) => (crate::_log_output(&format!($($arg)*)));
-}
+// #[macro_export]
+// macro_rules! log_output {
+//     ($($arg:tt)*) => (crate::_log_output(&format!($($arg)*)));
+// }
 
-#[macro_export]
-macro_rules! log_input {
-    ($($arg:tt)*) => (crate::_log_input(&format!($($arg)*)));
-}
+// #[macro_export]
+// macro_rules! log_input {
+//     ($($arg:tt)*) => (crate::_log_input(&format!($($arg)*)));
+// }
 
 #[macro_export]
 macro_rules! verbose_println {
