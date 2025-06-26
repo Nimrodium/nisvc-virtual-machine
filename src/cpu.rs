@@ -1,104 +1,29 @@
-// runtime rewrite
-//
-
+use core::fmt;
 use std::{
     collections::HashMap,
-    fmt::{self},
     fs::File,
-    io::{self, Read, Seek, Stderr, Stdin, Stdout, Write},
+    io::{Read, Seek, Stderr, Stdin, Stdout, Write},
+    mem::transmute,
+    ops::{Neg, Shl, Shr},
     process::exit,
 };
 
-use colorize::AnsiColor;
-use sdl2::libc::ERA;
+pub type RegHandle = u8;
+
+use crossterm::style::Stylize;
 
 use crate::{
-    constant::{
-        RegisterCode, RegisterWidth, VMAddress, ADDRESS_BYTES, FRAME_POINTER, GPR_COUNT,
-        INIT_VALUE, MMIO_ADDRESS_SPACE, NAME, OPCODE_BYTES, PROGRAM_COUNTER, RAM_SIZE,
-        REGISTER_BYTES, RNULL, SIGNATURE, STACK_POINTER,
-    },
-    log_input, log_output,
-    memory::Memory,
-    opcode::OpcodeTable,
-    verbose_println, very_verbose_println, very_very_verbose_println, DisplayMode, GLOBAL_CLOCK,
+    constant::{FRAME_POINTER, PROGRAM_COUNTER, STACK_POINTER, STACK_SIZE, UNINITIALIZED_REGISTER},
+    loader::NISVCEF,
+    log_disassembly, log_input, log_output,
+    memory::{bytes_to_u64, Memory},
+    opcode::Operation,
+    verbose_println, very_verbose_println, very_very_verbose_println, ExecutionError,
+    GLOBAL_PROGRAM_COUNTER,
 };
 
-#[derive(Clone, Debug)]
-pub enum VMErrorCode {
-    MemoryAccessViolation,
-    InitError,
-    RegisterOverflow,
-    InvalidRegisterCode,
-    MemoryInitializationError,
-    ExecFormatError,
-    CLIArgError,
-    InvalidOperationCode,
-    GenericError,
-    DisplayInitializationError,
-    StackOverflow,
-    StackUnderflow,
-    ShellError,        // fatal
-    ShellExit,         // exits shell
-    ShellCommandError, // non fatal
-
-    HostFileIOError,
-    VMFileIOError,
-}
-
 #[derive(Clone)]
-pub struct VMError {
-    pub code: VMErrorCode,
-    pub reason: String,
-}
-impl fmt::Debug for VMError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_string())
-    }
-}
-impl fmt::Display for VMError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let string = format!(
-            "{NAME}: {} {} :: {}",
-            "error:".red(),
-            format!("{:?}", self.code).yellow(),
-            self.reason
-        );
-        // let metadata = if let Some(md) = self.metadata.clone() {
-        //     md.to_string()
-        // } else {
-        //     String::new()
-        // };
-        write!(f, "{string}")
-    }
-}
-impl VMError {
-    pub fn with_code(mut self, code: VMErrorCode) -> Self {
-        self.code = code;
-        self
-    }
-    pub fn new(code: VMErrorCode, reason: String) -> Self {
-        Self { code, reason }
-    }
-}
-impl From<String> for VMError {
-    fn from(value: String) -> Self {
-        Self {
-            code: VMErrorCode::GenericError,
-            reason: value,
-        }
-    }
-}
-#[derive(Clone)]
-pub struct Register {
-    pub value: RegisterWidth,
-    pub base_name: String,
-    pub code: RegisterCode,
-    pub locked: bool,
-    window: SubRegisterWindow,
-}
-#[derive(Clone)]
-enum SubRegisterWindow {
+enum RegWindow {
     B1,
     B2,
     B3,
@@ -115,312 +40,166 @@ enum SubRegisterWindow {
     H,
     F,
 }
-impl SubRegisterWindow {
+impl RegWindow {
     fn to_suffix(&self) -> &str {
         match self {
-            SubRegisterWindow::B1 => "b1",
-            SubRegisterWindow::B2 => "b2",
-            SubRegisterWindow::B3 => "b3",
-            SubRegisterWindow::B4 => "b4",
-            SubRegisterWindow::B5 => "b5",
-            SubRegisterWindow::B6 => "b6",
-            SubRegisterWindow::B7 => "b7",
-            SubRegisterWindow::B8 => "b8",
-            SubRegisterWindow::Q1 => "q1",
-            SubRegisterWindow::Q2 => "q2",
-            SubRegisterWindow::Q3 => "q3",
-            SubRegisterWindow::Q4 => "q4",
-            SubRegisterWindow::L => "l",
-            SubRegisterWindow::H => "h",
-            SubRegisterWindow::F => "f",
+            RegWindow::B1 => "b1",
+            RegWindow::B2 => "b2",
+            RegWindow::B3 => "b3",
+            RegWindow::B4 => "b4",
+            RegWindow::B5 => "b5",
+            RegWindow::B6 => "b6",
+            RegWindow::B7 => "b7",
+            RegWindow::B8 => "b8",
+            RegWindow::Q1 => "q1",
+            RegWindow::Q2 => "q2",
+            RegWindow::Q3 => "q3",
+            RegWindow::Q4 => "q4",
+            RegWindow::L => "l",
+            RegWindow::H => "h",
+            RegWindow::F => "f",
         }
     }
     fn from_suffix(suffix: &str) -> Self {
         match suffix {
-            "b1" => SubRegisterWindow::B1,
-            "b2" => SubRegisterWindow::B2,
-            "b3" => SubRegisterWindow::B3,
-            "b4" => SubRegisterWindow::B4,
-            "b5" => SubRegisterWindow::B5,
-            "b6" => SubRegisterWindow::B6,
-            "b7" => SubRegisterWindow::B7,
-            "b8" => SubRegisterWindow::B8,
-            "q1" => SubRegisterWindow::Q1,
-            "q2" => SubRegisterWindow::Q2,
-            "q3" => SubRegisterWindow::Q3,
-            "q4" => SubRegisterWindow::Q4,
-            "l" => SubRegisterWindow::L,
-            "h" => SubRegisterWindow::H,
-            "f" => SubRegisterWindow::F,
-            _ => SubRegisterWindow::F,
+            "b1" => RegWindow::B1,
+            "b2" => RegWindow::B2,
+            "b3" => RegWindow::B3,
+            "b4" => RegWindow::B4,
+            "b5" => RegWindow::B5,
+            "b6" => RegWindow::B6,
+            "b7" => RegWindow::B7,
+            "b8" => RegWindow::B8,
+            "q1" => RegWindow::Q1,
+            "q2" => RegWindow::Q2,
+            "q3" => RegWindow::Q3,
+            "q4" => RegWindow::Q4,
+            "l" => RegWindow::L,
+            "h" => RegWindow::H,
+            "f" => RegWindow::F,
+            _ => RegWindow::F,
         }
     }
+}
+
+/// decodes into register index and window
+fn decode_register(code: RegHandle) -> (u8, RegWindow) {
+    let base = code & 0x0f;
+    let sub = (code & 0xf0) >> 4;
+
+    match sub {
+        0 => (base, RegWindow::F),
+        1 => (base, RegWindow::B1),
+        2 => (base, RegWindow::B2),
+        3 => (base, RegWindow::B3),
+        4 => (base, RegWindow::B4),
+        5 => (base, RegWindow::B5),
+        6 => (base, RegWindow::B6),
+        7 => (base, RegWindow::B7),
+        8 => (base, RegWindow::B8),
+        9 => (base, RegWindow::Q1),
+        10 => (base, RegWindow::Q2),
+        11 => (base, RegWindow::Q3),
+        12 => (base, RegWindow::Q4),
+        13 => (base, RegWindow::L),
+        14 => (base, RegWindow::H),
+        15 => (base, RegWindow::F), // potential to reroute to other registers
+        16 => (base, RegWindow::F), // potential to reroute to other registers
+        _ => unreachable!(),
+    }
+}
+
+union RegisterUnion {
+    full: u64,
+    half: [u32; 2],
+    quarter: [u16; 4],
+    byte: [u8; 8],
+}
+
+// reimplemented
+struct Register {
+    base_name: String,
+    internal: RegisterUnion,
+    code: RegHandle,
+    immutable: bool,
 }
 impl Register {
-    fn new(name: &str, code: RegisterCode) -> Self {
+    fn new(name: &str, code: RegHandle) -> Self {
         Self {
-            value: INIT_VALUE,
             base_name: name.to_string(),
-            locked: false,
-            window: SubRegisterWindow::F,
+            internal: RegisterUnion {
+                full: UNINITIALIZED_REGISTER,
+            },
             code,
+            immutable: false,
         }
     }
-    pub fn name(&self) -> String {
-        if self.code < 4 {
+
+    fn name(&self, window: RegWindow) -> String {
+        if (self.code & 0x0f) <= 4 {
             self.base_name.clone()
         } else {
-            self.base_name.clone() + self.window.to_suffix()
+            let s = self.base_name.clone() + window.to_suffix();
+            s
         }
     }
-    pub fn extract(&self) -> (String, u64) {
-        (self.name(), self.read())
-    }
 
-    pub fn write_at_byte(&mut self, value: u64, i: u8) {
-        if i > 8 || i <= 0 {
-            panic!("attempted to read at an invalid byte index {i} > 8")
+    fn write(&mut self, window: RegWindow, value: u64) {
+        if !self.immutable {
+            match window {
+                RegWindow::B1 => unsafe { self.internal.byte[0] = value as u8 },
+                RegWindow::B2 => unsafe { self.internal.byte[1] = value as u8 },
+                RegWindow::B3 => unsafe { self.internal.byte[2] = value as u8 },
+                RegWindow::B4 => unsafe { self.internal.byte[3] = value as u8 },
+                RegWindow::B5 => unsafe { self.internal.byte[4] = value as u8 },
+                RegWindow::B6 => unsafe { self.internal.byte[5] = value as u8 },
+                RegWindow::B7 => unsafe { self.internal.byte[6] = value as u8 },
+                RegWindow::B8 => unsafe { self.internal.byte[7] = value as u8 },
+                RegWindow::Q1 => unsafe { self.internal.quarter[0] = value as u16 },
+                RegWindow::Q2 => unsafe { self.internal.quarter[1] = value as u16 },
+                RegWindow::Q3 => unsafe { self.internal.quarter[2] = value as u16 },
+                RegWindow::Q4 => unsafe { self.internal.quarter[3] = value as u16 },
+                RegWindow::L => unsafe { self.internal.half[0] = value as u32 },
+                RegWindow::H => unsafe { self.internal.half[1] = value as u32 },
+                RegWindow::F => self.internal.full = value,
+            }
         }
-        let i = i - 1;
-        // println!("pre {value:x}");
-        let byte_mask = 0x00_00_00_00_00_00_00_FF;
-        let clean_value = value & byte_mask;
-        let byte_offset = i * 8;
-        let byte_to_be_inserted = clean_value << byte_offset;
-        // println!("{byte_to_be_inserted:0>16x} =\n{clean_value:0>16x} << {byte_offset}",);
-        // println!("shift {byte_to_be_inserted:x} offset to byte {i}");
-        // (b & ~a) | a
-        let inverse_clear_dest_mask = !byte_mask.rotate_left(byte_offset as u32);
-        let masked_reg = self.value & inverse_clear_dest_mask;
-        // println!(
-        //     "masked {} = \n{:0>16x}\n{:0>16x} &\n{masked_reg:0>16x}\n",
-        //     self.name(),
-        //     self.value,
-        //     !byte_mask
-        // );
-        // println!("masked reg {masked_reg:#x}");
-
-        self.value = masked_reg | byte_to_be_inserted;
-        // println!(
-        //     "{:0>16} =\n{masked_reg:0>16x} |\n{byte_to_be_inserted:0>16x}",
-        //     self.value
-        // );
-        // println!("inserted {:x}", self.value);
     }
-
-    pub fn write_at_quarter(&mut self, value: u64, i: u8) {
-        if i > 4 || i <= 0 {
-            panic!("attempted to read at an invalid quarter index {i} > 4")
+    fn read(&self, window: RegWindow) -> u64 {
+        match window {
+            RegWindow::B1 => unsafe { self.internal.byte[0] as u64 },
+            RegWindow::B2 => unsafe { self.internal.byte[1] as u64 },
+            RegWindow::B3 => unsafe { self.internal.byte[2] as u64 },
+            RegWindow::B4 => unsafe { self.internal.byte[3] as u64 },
+            RegWindow::B5 => unsafe { self.internal.byte[4] as u64 },
+            RegWindow::B6 => unsafe { self.internal.byte[5] as u64 },
+            RegWindow::B7 => unsafe { self.internal.byte[6] as u64 },
+            RegWindow::B8 => unsafe { self.internal.byte[7] as u64 },
+            RegWindow::Q1 => unsafe { self.internal.quarter[0] as u64 },
+            RegWindow::Q2 => unsafe { self.internal.quarter[1] as u64 },
+            RegWindow::Q3 => unsafe { self.internal.quarter[2] as u64 },
+            RegWindow::Q4 => unsafe { self.internal.quarter[3] as u64 },
+            RegWindow::L => unsafe { self.internal.half[0] as u64 },
+            RegWindow::H => unsafe { self.internal.half[1] as u64 },
+            RegWindow::F => unsafe { self.internal.full },
         }
-        let i = i - 1;
-        // println!("inserting {value:#x}");
-        let byte_offset = i * 16;
-
-        let byte_mask = 0x00_00_00_00_00_00_FF_FF;
-        let clean_value = value & byte_mask;
-        // println!("masked_u64 = {clean_value:#x}");
-        let quarter_to_be_inserted = clean_value << byte_offset;
-
-        // println!("masked_u64 (shifted) = {quarter_to_be_inserted:#x}");
-        let inverse_clear_dest_mask = !byte_mask.rotate_left(byte_offset as u32);
-        let masked_reg = (self.value & inverse_clear_dest_mask);
-
-        self.value = masked_reg | quarter_to_be_inserted;
-
-        // println!("inserted {:x}", self.value);
     }
-
-    pub fn write_at_half(&mut self, value: u64, i: u8) {
-        if i > 2 || i <= 0 {
-            panic!("attempted to read at an invalid half index {i} > 2")
-        }
-        let i = i - 1;
-        let byte_offset = i * 32;
-        let byte_mask = 0x00_00_00_00_FF_FF_FF_FF;
-        let clean_value = value & byte_mask;
-        let half_to_be_inserted = clean_value << byte_offset;
-        let inverse_clear_dest_mask = !byte_mask.rotate_left(byte_offset as u32);
-        self.value = (self.value & inverse_clear_dest_mask) | half_to_be_inserted;
-        // println!("inserted {:x}", self.value);
-    }
-
-    pub fn read_at_byte(&self, i: u8) -> u64 {
-        if i > 8 || i <= 0 {
-            panic!("attempted to read at an invalid byte index {i} > 7")
-        }
-        let i = i - 1; // turn to real index
-        let byte_mask = 0x00_00_00_00_00_00_00_FF << (i * 8);
-        let masked_value = self.value & byte_mask;
-        let shifted_value = masked_value >> (i * 8);
-        shifted_value
-    }
-    pub fn read_at_quarter(&self, i: u8) -> u64 {
-        if i > 4 || i <= 0 {
-            panic!("attempted to read at an invalid byte index {i} > 3")
-        }
-        let i = i - 1;
-        let byte_mask = 0x00_00_00_00_00_00_FF_FF << (i * 16);
-        let masked_value = self.value & byte_mask;
-        let shifted_value = masked_value >> (i * 16);
-        shifted_value
-    }
-    pub fn read_at_half(&self, i: u8) -> u64 {
-        if i > 2 || i <= 0 {
-            panic!("attempted to read at an invalid byte index {i} > 1")
-        }
-        let i = i - 1;
-
-        let byte_mask = 0x00_00_00_00_FF_FF_FF_FF << (i * 32);
-        let masked_value = self.value & byte_mask;
-        let shifted_value = masked_value >> (i * 32);
-        shifted_value
-    }
-    // fn write_byte_sub(&mut self, byte: u8, byte_index: u8) -> Result<(), VMError> {
-
-    //         _ => {
-    //             return Err(VMError::new(
-    //                 VMErrorCode::RegisterOverflow,
-    //                 format!("invalid byte index"),
-    //             ))
-    //         }
-    //     };
+    // fn as_window_mut(&mut self, window: RegWindow) -> &mut Self {
+    //     self.window = window;
+    //     self
     // }
-    pub fn write(&mut self, value: u64) {
-        log_input!("{} <- {}", self.name(), value);
-        if !self.locked {
-            match self.window {
-                SubRegisterWindow::B1 => self.write_at_byte(value, 1),
-                SubRegisterWindow::B2 => self.write_at_byte(value, 2),
-                SubRegisterWindow::B3 => self.write_at_byte(value, 3),
-                SubRegisterWindow::B4 => self.write_at_byte(value, 4),
-                SubRegisterWindow::B5 => self.write_at_byte(value, 5),
-                SubRegisterWindow::B6 => self.write_at_byte(value, 6),
-                SubRegisterWindow::B7 => self.write_at_byte(value, 7),
-                SubRegisterWindow::B8 => self.write_at_byte(value, 8),
-                SubRegisterWindow::Q1 => self.write_at_quarter(value, 1),
-                SubRegisterWindow::Q2 => self.write_at_quarter(value, 2),
-                SubRegisterWindow::Q3 => self.write_at_quarter(value, 3),
-                SubRegisterWindow::Q4 => self.write_at_quarter(value, 4),
-                SubRegisterWindow::L => self.write_at_half(value, 1),
-                SubRegisterWindow::H => self.write_at_half(value, 2),
-                SubRegisterWindow::F => self.value = value,
-            };
-            // self.value = value as RegisterWidth;
-        } else {
-            very_verbose_println!("attempted to write to locked register {}", self.name())
-        }
-    }
-
-    // pub fn _write(&mut self, value: RegisterWidth) -> Result<(), VMError> {
-    //     if value > RegisterWidth::MAX {
-    //         return Err(VMError {
-    //             code: VMErrorCode::RegisterOverflow,
-    //             reason: format!(
-    //                 "cannot write {value} to register {} :: over max int {}",
-    //                 self.name(),
-    //                 RegisterWidth::MAX
-    //             ),
-    //         });
-    //     }
-    //     if !self.locked {
-    //         self.value = value as RegisterWidth;
-    //     } else {
-    //         very_verbose_println!("attempted to write to locked register {}", self.name())
-    //     }
-    //     log_input!("{} <- {value}", self.name());
-    //     Ok(())
+    // fn as_window(&mut self, window: RegWindow) -> &Self {
+    //     self.window = window;
+    //     self
     // }
-
-    // fn write_from_slice(&mut self, bytes: &[u8]) -> Result<(), VMError> {
-    //     let value = register_value_from_slice(bytes) as RegisterWidth;
-    //     self.write(value);
-    //     Ok(())
-    // }
-
-    // pub fn _read(&self) -> u64 {
-    //     log_output!("{} -> {}", self.name(), self.value);
-    //     self.value
-    // }
-    pub fn read(&self) -> u64 {
-        let value = match self.window {
-            SubRegisterWindow::B1 => self.read_at_byte(1),
-            SubRegisterWindow::B2 => self.read_at_byte(2),
-            SubRegisterWindow::B3 => self.read_at_byte(3),
-            SubRegisterWindow::B4 => self.read_at_byte(4),
-            SubRegisterWindow::B5 => self.read_at_byte(5),
-            SubRegisterWindow::B6 => self.read_at_byte(6),
-            SubRegisterWindow::B7 => self.read_at_byte(7),
-            SubRegisterWindow::B8 => self.read_at_byte(8),
-            SubRegisterWindow::Q1 => self.read_at_quarter(1),
-            SubRegisterWindow::Q2 => self.read_at_quarter(2),
-            SubRegisterWindow::Q3 => self.read_at_quarter(3),
-            SubRegisterWindow::Q4 => self.read_at_quarter(4),
-            SubRegisterWindow::L => self.read_at_half(1),
-            SubRegisterWindow::H => self.read_at_half(2),
-            SubRegisterWindow::F => self.value,
-        };
-        log_output!("{} -> {}", self.name(), value);
-        value
-    }
-    fn as_window_mut(&mut self, window: SubRegisterWindow) -> &mut Self {
-        self.window = window;
-        self
-    }
-    fn as_window(&mut self, window: SubRegisterWindow) -> &Self {
-        self.window = window;
-        self
-    }
-}
-impl fmt::Display for Register {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = self.read();
-        write!(
-            f,
-            "[ {} ({:#})|({:#x})|({:#b}) ]",
-            self.name(),
-            value,
-            value,
-            value
-        )
-    }
 }
 
 pub struct CPURegisters {
-    registers: Vec<Register>,
+    registers: [Register; 16],
 }
-impl fmt::Display for CPURegisters {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut string = String::new();
-        for r in &self.registers {
-            string.push_str(&(r.to_string() + r.code.to_string().as_str()));
-            string.push('\n')
-        }
-        write!(f, "{string}")
-    }
-}
-
 impl CPURegisters {
-    fn _new() -> Self {
-        let mut registers: Vec<Register> = vec![];
-        verbose_println!("initializing registers...");
-        for n in 1..=GPR_COUNT {
-            // let code = i + 1;
-            let name = "r".to_string() + n.to_string().as_str();
-
-            registers.push(Register::new(&name, n));
-        }
-        registers.push(Register::new("pc", PROGRAM_COUNTER));
-        registers.push(Register::new("sp", STACK_POINTER));
-        registers.push(Register::new("fp", FRAME_POINTER));
-        let mut rnull = Register::new("null", RNULL);
-        rnull.write(0);
-        rnull.locked = true;
-        registers.push(rnull);
-        Self { registers }
-    }
     fn new() -> Self {
-        verbose_println!("initializing registers...");
-        let mut registers: Vec<Register> = vec![
+        let mut registers = [
             Register::new("null", 0),
             Register::new("pc", 1),
             Register::new("sp", 2),
@@ -437,613 +216,861 @@ impl CPURegisters {
             Register::new("r10", 13),
             Register::new("r11", 14),
             Register::new("r12", 15),
-            Register::new("r13", 16),
-            Register::new("r14", 17),
-            Register::new("r15", 18),
         ];
-        registers[0].write(0);
-        registers[0].locked = true;
+        registers[0].write(RegWindow::F, 0);
+        registers[0].immutable = true;
         Self { registers }
     }
-    pub fn get_register(&mut self, code: RegisterCode) -> Result<&Register, VMError> {
-        let base = code & 0x0F; // mask out subregister field
-        let sub = (code & 0xF0) >> 4; // mask out register field
-        very_very_verbose_println!("getting register {base:#x} sub {sub:#x}");
-        if base as usize > self.registers.len() {
-            panic!("invalid register code");
-        }
 
-        let register: &mut Register = if let Some(r) = self.registers.get_mut(base as usize) {
-            r
-        } else {
-            panic!("register does not exist");
-        };
-        // not subdivided
-
-        let window: SubRegisterWindow = if base <= 3 {
-            SubRegisterWindow::F
-        } else {
-            match sub {
-                0 => SubRegisterWindow::F,
-                1 => SubRegisterWindow::B1,
-                2 => SubRegisterWindow::B2,
-                3 => SubRegisterWindow::B3,
-                4 => SubRegisterWindow::B4,
-                5 => SubRegisterWindow::B5,
-                6 => SubRegisterWindow::B6,
-                7 => SubRegisterWindow::B7,
-                8 => SubRegisterWindow::B8,
-                9 => SubRegisterWindow::Q1,
-                10 => SubRegisterWindow::Q2,
-                11 => SubRegisterWindow::Q3,
-                12 => SubRegisterWindow::Q4,
-                13 => SubRegisterWindow::L,
-                14 => SubRegisterWindow::H,
-                15 => SubRegisterWindow::F,
-                16 => SubRegisterWindow::F,
-                _ => panic!("invalid code"),
-            }
-        };
-        let windowed_register = register.as_window(window);
-        very_very_verbose_println!("passing register as {}", windowed_register.name());
-        Ok(windowed_register)
+    pub fn get_register(&self, idx: u8) -> &Register {
+        &self.registers[idx as usize]
     }
-    pub fn get_mut_register(&mut self, code: RegisterCode) -> Result<&mut Register, VMError> {
-        let base = code & 0x0F; // mask out subregister field
-        let sub = (code & 0xF0) >> 4; // mask out register field
-        very_very_verbose_println!("getting register {base:#x} sub {sub:#x}");
-        if base as usize > self.registers.len() {
-            panic!("invalid register code");
-        }
 
-        let register: &mut Register = if let Some(r) = self.registers.get_mut(base as usize) {
-            r
-        } else {
-            panic!("register does not exist");
-        };
-        // not subdivided
-
-        let window: SubRegisterWindow = if base <= 3 {
-            SubRegisterWindow::F
-        } else {
-            match sub {
-                0 => SubRegisterWindow::F,
-                1 => SubRegisterWindow::B1,
-                2 => SubRegisterWindow::B2,
-                3 => SubRegisterWindow::B3,
-                4 => SubRegisterWindow::B4,
-                5 => SubRegisterWindow::B5,
-                6 => SubRegisterWindow::B6,
-                7 => SubRegisterWindow::B7,
-                8 => SubRegisterWindow::B8,
-                9 => SubRegisterWindow::Q1,
-                10 => SubRegisterWindow::Q2,
-                11 => SubRegisterWindow::Q3,
-                12 => SubRegisterWindow::Q4,
-                13 => SubRegisterWindow::L,
-                14 => SubRegisterWindow::H,
-                15 => SubRegisterWindow::F,
-                16 => SubRegisterWindow::F,
-                _ => panic!("invalid code"),
-            }
-        };
-        let windowed_register = register.as_window_mut(window);
-        very_very_verbose_println!("passing register as {}", windowed_register.name());
-        Ok(windowed_register)
+    pub fn get_mut_register(&mut self, idx: u8) -> &mut Register {
+        &mut self.registers[idx as usize]
     }
-    pub fn get_register_via_reverse_lookup(
-        &mut self,
-        register_name: &str,
-    ) -> Result<&mut Register, VMError> {
-        let valid_sub_names = [
-            "b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "q1", "q2", "q3", "q4", "l", "h", "f",
-        ];
-        let (base_name, window) = match register_name {
-            "null" | "pc" | "sp" | "fp" => (register_name, "f"),
-
-            _ => (&register_name[..2], {
-                let sub = &register_name[2..];
-                if sub.is_empty() {
-                    "f"
-                } else {
-                    if valid_sub_names.contains(&sub) {
-                        sub
-                    } else {
-                        return Err(VMError::new(
-                            VMErrorCode::ShellCommandError,
-                            format!("{sub} is not a valid subregister"),
-                        ));
-                    }
-                }
-            }),
-        };
-        println!("{base_name}|{window}");
-        let mut reg: Option<&mut Register> = None;
-        for r in &mut self.registers {
-            if r.base_name.as_str() == base_name {
-                reg = Some(r);
-            }
-        }
-        if let Some(r) = reg {
-            let window = SubRegisterWindow::from_suffix(window);
-            Ok(r.as_window_mut(window))
-        } else {
-            Err(VMError::new(
-                VMErrorCode::ShellCommandError,
-                format!("{register_name} is not a valid register"),
-            ))
-        }
+    pub fn read(&mut self, register_handle: RegHandle) -> u64 {
+        let (idx, window) = decode_register(register_handle);
+        self.get_register(idx).read(window)
     }
-    // pub fn _get_register(&self, code: RegisterCode) -> Result<&Register, VMError> {
-    //     if code == 0 {
-    //         return Err(VMError::new(
-    //             VMErrorCode::InvalidRegisterCode,
-    //             format!("{code} evaluates to -1 which is not a valid register code"),
-    //         ));
-    //     }
-    //     let code_index = (code - 1) as usize;
-    //     let register = match self.registers.get(code_index) {
-    //         Some(r) => r,
-    //         None => {
-    //             return Err(VMError {
-    //                 code: VMErrorCode::InvalidRegisterCode,
-    //                 reason: format!("{code_index:#x} is not a valid register code"),
-    //             })
-    //         }
-    //     };
-    //     Ok(register)
-    // }
-    // pub fn _get_mut_register(&mut self, code: RegisterCode) -> Result<&mut Register, VMError> {
-    //     very_very_verbose_println!("accessing register code {code}");
-    //     if code == 0 {
-    //         return Err(VMError::new(
-    //             VMErrorCode::InvalidRegisterCode,
-    //             format!("{code} evaluates to -1 which is not a valid register code"),
-    //         ));
-    //     }
-    //     let code_index = (code - 1) as usize;
-    //     let register = match self.registers.get_mut(code_index) {
-    //         Some(r) => r,
-    //         None => {
-    //             return Err(VMError {
-    //                 code: VMErrorCode::InvalidRegisterCode,
-    //                 reason: format!("{code_index:#x} is not a valid register code"),
-    //             })
-    //         }
-    //     };
-    //     Ok(register)
-    // }
+    pub fn write(&mut self, register_handle: RegHandle, value: u64) {
+        let (idx, window) = decode_register(register_handle);
+        self.get_mut_register(idx).write(window, value)
+    }
 
-    // pub fn get_register_via_reverse_lookup(
-    //     &mut self,
-    //     register_name: &str,
-    // ) -> Result<&mut Register, VMError> {
-    //     let mut reg_buf: Option<&mut Register> = None;
-    //     for register in &mut self.registers {
-    //         if register.name() == register_name {
-    //             reg_buf = Some(register)
-    //         }
-    //     }
-    //     if let Some(reg) = reg_buf {
-    //         return Ok(reg);
-    //     } else {
-    //         return Err(VMError::new(
-    //             VMErrorCode::ShellCommandError,
-    //             format!("register {register_name} is not a valid register"),
-    //         ));
-    //     }
-    // }
+    pub fn print(&mut self, register_handle: RegHandle) -> String {
+        let (idx, window) = decode_register(register_handle);
+        let name = self.get_register(idx).name(window);
+        format!(
+            "{}{}",
+            name.red(),
+            format!("(0x{:0>2x})", self.read(register_handle)).dark_blue()
+        )
+    }
+    pub fn print_float(&mut self, register_handle: RegHandle) -> String {
+        todo!()
+    }
 }
 
 pub struct CPU {
     pub registers: CPURegisters,
     pub memory: Memory,
-    opcode_table: OpcodeTable,
-    pub stack_base: RegisterWidth,
-    pub stack_max: RegisterWidth,
     pub vm_host_bridge: VMHostBridge,
-    clock_speed: usize,
-    pub ignore_breakpoints: bool,
-    pub default_breakpoint_behavior: bool,
-    pub entry_point: VMAddress,
+    pub pending_interrupt: u8,
 }
+
 impl CPU {
-    pub fn new(
-        clock_speed: usize,
-        display: DisplayMode,
-        ignore_breakpoints: bool,
-    ) -> Result<Self, VMError> {
-        let registers = CPURegisters::new();
-        very_very_verbose_println!("registers:\n{registers}");
-        let memory = match Memory::new(display) {
-            Ok(m) => m,
-            Err(err) => {
-                return Err(VMError {
-                    code: VMErrorCode::MemoryInitializationError,
-                    reason: format!("TMP MESSAGE memory failed to initialize :: {err}"),
-                })
-            }
-        };
-        let opcode_table = OpcodeTable::new();
-        Ok(Self {
-            registers,
-            memory,
-            opcode_table,
-            stack_base: RAM_SIZE,
-            stack_max: 0,
+    pub fn new(heap: u64, stack: u64) -> Self {
+        Self {
+            registers: CPURegisters::new(),
+            memory: Memory::new(heap, stack),
             vm_host_bridge: VMHostBridge::new(),
-            clock_speed,
-            ignore_breakpoints,
-            default_breakpoint_behavior: ignore_breakpoints,
-            entry_point: 0,
-        })
+            pending_interrupt: 0,
+        }
     }
-
-    pub fn load(&mut self, file_path: &str) -> Result<(), VMError> {
-        verbose_println!("loading file {file_path} ...");
-        let mut file = match File::open(file_path) {
-            Ok(f) => f,
-            Err(err) => {
-                return Err(VMError {
-                    code: VMErrorCode::InitError,
-                    reason: format!("could not open {file_path} :: {err}"),
-                })
-            }
-        };
-        let mut file_buf: Vec<u8> = vec![];
-        match file.read_to_end(&mut file_buf) {
-            Ok(bytes_read) => verbose_println!("read {bytes_read} byte(s)"),
-            Err(err) => {
-                return Err(VMError {
-                    code: VMErrorCode::InitError,
-                    reason: format!("could not read {file_path} :: {err}"),
-                })
-            }
-        };
-        let nisvc_ef_file = NISVCEF::new(&file_buf)?;
-        self.memory.program = nisvc_ef_file.program_image.to_vec();
-        self.memory.flash_ram(nisvc_ef_file.ram_image).unwrap();
-        self.memory.ram_base =
-            (MMIO_ADDRESS_SPACE + nisvc_ef_file.program_image.len()) as RegisterWidth;
-
-        self.stack_max =
-            self.memory.ram_base + (nisvc_ef_file.ram_image.len() + 1) as RegisterWidth;
+    pub fn load(&mut self, file_path: &str) -> Result<(), ExecutionError> {
+        let mut file = File::open(file_path)
+            .map_err(|e| ExecutionError::new(format!("cannot open file `{file_path}`: {e}",)))?;
+        let mut contents: Vec<u8> = Vec::new();
+        file.read_to_end(&mut contents)
+            .map_err(|e| ExecutionError::new(format!("cannot read file to memory: {e}")))?;
+        let nisvc_executable_package = NISVCEF::load(contents)?;
+        self.memory.load(nisvc_executable_package.image)?;
         self.registers
-            .get_mut_register(STACK_POINTER)?
-            .write(self.stack_base);
-        self.registers
-            .get_mut_register(PROGRAM_COUNTER)?
-            .write(nisvc_ef_file.entry_point);
-        self.entry_point = nisvc_ef_file.entry_point;
-
-        verbose_println!("{nisvc_ef_file}");
-        verbose_println!(
-            "stack address range:  {}..{}",
-            self.stack_max,
-            self.stack_base
-        );
+            .write(PROGRAM_COUNTER, nisvc_executable_package.entry_point);
+        self.registers.write(STACK_POINTER, self.memory.stack_start);
+        self.registers.write(FRAME_POINTER, self.memory.stack_start);
         Ok(())
     }
+    /// advances pc and returns consumed byte
+    fn consume_byte(&mut self) -> Result<u8, ExecutionError> {
+        let pc = self.registers.read(PROGRAM_COUNTER);
+        let byte = self.memory.read_byte(pc)?;
+        self.registers.write(PROGRAM_COUNTER, pc + 1);
+        very_verbose_println!("byte at {pc:#x} consumed: {:#x}", byte);
 
-    fn read_from_pc(&mut self) -> Result<u8, VMError> {
-        let op_addr = self.registers.get_register(PROGRAM_COUNTER)?.read();
-        let mem_byte = self.memory.mmu_read(op_addr as RegisterWidth)?;
-        Ok(mem_byte)
+        Ok(byte)
     }
-
-    pub fn read_operands(&mut self, requested_slice_length: usize) -> Result<Vec<u8>, VMError> {
-        // let start_address = self.read_from_pc()? as RegisterWidth;
-        let start_address =
-            (self.registers.get_register(PROGRAM_COUNTER)?.read() as usize) + OPCODE_BYTES;
-
-        let operand_bytes = self
-            .memory
-            .read_bytes(start_address as RegisterWidth, requested_slice_length)?;
+    /// advances pc and returns consumed address (double word u64)
+    fn consume_constant(&mut self) -> Result<u64, ExecutionError> {
+        let pc = self.registers.read(PROGRAM_COUNTER);
+        let double_word = self.memory.read_address(pc)?;
+        self.registers.write(PROGRAM_COUNTER, pc + 8);
         very_verbose_println!(
-            "operand bytes read from {start_address}..{} {operand_bytes:?}",
-            requested_slice_length + start_address
+            "byte at {pc:#x}..{:#x} consumed: {:#x}",
+            pc + 8,
+            double_word
         );
-        Ok(operand_bytes)
+
+        Ok(double_word)
     }
 
-    pub fn step(&mut self) -> Result<(), VMError> {
-        // let op_addr = self.registers.get_mut_register(PROGRAM_COUNTER)?.read();
-        // let op_code = self.memory.mmu_read(op_addr as RegisterWidth)?;
-        let byte_at_pc = self.read_from_pc()?;
-        // let op_addr = self.registers.get_register(PROGRAM_COUNTER)?.read();
-        // let byte_at_pc = self.memory.mmu_read(op_addr as RegisterWidth)?;
-        // verbose_println!("pc::{op_addr}");
-        let operation = self.opcode_table.decode(byte_at_pc)?;
-        very_very_verbose_println!("read operation {}", operation.name);
-        let bytes_read = match operation.code {
-            0x0 => self.op_nop()?,
-            0x1 => self.op_mov()?,
-            0x2 => self.op_movim()?,
-            0x3 => self.op_load()?,
-            0x4 => self.op_store()?,
-            0x5 => self.op_add()?,
-            0x6 => self.op_sub()?,
-            0x7 => self.op_mult()?,
-            0x8 => self.op_div()?,
-            0x9 => self.op_or()?,
-            0xa => self.op_xor()?,
-            0xb => self.op_and()?,
-            0xc => self.op_not()?,
-            0xd => self.op_shl()?,
-            0xe => self.op_shr()?,
-            0xf => self.op_rotl()?,
-            0x10 => self.op_rotr()?,
-            0x11 => self.op_neg()?,
-            0x12 => self.op_jmp()?,
-            0x13 => self.op_jifz()?,
-            0x14 => self.op_jifnz()?,
-            0x15 => self.op_pr()?,
-            0x16 => self.op_inc()?,
-            0x17 => self.op_dec()?,
-            0x18 => self.op_push()?,
-            0x19 => self.op_pop()?,
-            0x1a => self.op_call()?,
-            0x1b => self.op_ret()?,
-            0x1c => self.op_cache()?,
-            0x1d => self.op_restore()?,
-            0x1e => self.op_fopen()?,
-            0x1f => self.op_fread()?,
-            0x20 => self.op_fwrite()?,
-            0x21 => self.op_fseek()?,
-            0x22 => self.op_fclose()?,
-            //special
-            0xfe => self.op_breakpoint()?,
-
-            _ => unreachable!(),
+    fn fetch_decode(&mut self) -> Result<Operation, ExecutionError> {
+        let opcode = self.consume_byte()?;
+        let operation = match opcode {
+            0x00 => Operation::Nop,
+            0x01 => Operation::Cpy {
+                dest: self.consume_byte()?,
+                src: self.consume_byte()?,
+            },
+            0x02 => Operation::Ldi {
+                dest: self.consume_byte()?,
+                src: self.consume_constant()?,
+            },
+            0x03 => Operation::Load {
+                dest: self.consume_byte()?,
+                n: self.consume_byte()?,
+                addr: self.consume_constant()?,
+            },
+            0x04 => Operation::Store {
+                dest: self.consume_byte()?,
+                n: self.consume_byte()?,
+                src: self.consume_byte()?,
+            },
+            0x05 => Operation::Add {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x06 => Operation::Sub {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x07 => Operation::Mult {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x08 => Operation::Div {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x09 => Operation::Or {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x0a => Operation::Xor {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x0b => Operation::And {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x0c => Operation::Not {
+                dest: self.consume_byte()?,
+                op: self.consume_byte()?,
+            },
+            0x0d => Operation::Shl {
+                dest: self.consume_byte()?,
+                n: self.consume_byte()?,
+                src: self.consume_byte()?,
+            },
+            0x0e => Operation::Shr {
+                dest: self.consume_byte()?,
+                n: self.consume_byte()?,
+                src: self.consume_byte()?,
+            },
+            0x0f => Operation::Rotl {
+                dest: self.consume_byte()?,
+                n: self.consume_byte()?,
+                src: self.consume_byte()?,
+            },
+            0x10 => Operation::Rotr {
+                dest: self.consume_byte()?,
+                n: self.consume_byte()?,
+                src: self.consume_byte()?,
+            },
+            0x11 => Operation::Neg {
+                dest: self.consume_byte()?,
+                op: self.consume_byte()?,
+            },
+            0x12 => Operation::Jmp {
+                addr: self.consume_constant()?,
+            },
+            0x13 => Operation::Jifz {
+                condition: self.consume_byte()?,
+                addr: self.consume_constant()?,
+            },
+            0x14 => Operation::Jifnz {
+                condition: self.consume_byte()?,
+                addr: self.consume_constant()?,
+            },
+            // pr
+            0x16 => Operation::Inc {
+                reg: self.consume_byte()?,
+            },
+            0x17 => Operation::Dec {
+                reg: self.consume_byte()?,
+            },
+            0x18 => Operation::Push {
+                src: self.consume_byte()?,
+            },
+            0x19 => Operation::Pop {
+                dest: self.consume_byte()?,
+            },
+            0x1a => Operation::Call {
+                addr: self.consume_constant()?,
+            },
+            0x1b => Operation::Ret,
+            // 0x1e => Operation::Fopen {
+            //     dest_fd: self.consume_byte()?,
+            //     file_path_str_ptr: self.consume_byte()?,
+            //     file_path_str_len: self.consume_byte()?,
+            // },
+            // 0x1f => Operation::Fread {
+            //     fd: self.consume_byte()?,
+            //     buf_ptr: self.consume_byte()?,
+            //     buf_len: self.consume_byte()?,
+            // },
+            // 0x20 => Operation::Fwrite {
+            //     fd: self.consume_byte()?,
+            //     buf_ptr: self.consume_byte()?,
+            //     buf_len: self.consume_byte()?,
+            // },
+            // 0x21 => Operation::Fseek {
+            //     fd: self.consume_byte()?,
+            //     seek: self.consume_byte()?,
+            //     direction: self.consume_byte()?,
+            // },
+            // 0x22 => Operation::Fclose {
+            //     fd: self.consume_byte()?,
+            // },
+            // 0x23 => Operation::Malloc {
+            //     dest_ptr: self.consume_byte()?,
+            //     size: self.consume_byte()?,
+            // },
+            // 0x24 => Operation::Realloc {
+            //     dest_ptr: self.consume_byte()?,
+            //     ptr: self.consume_byte()?,
+            //     new_size: self.consume_byte()?,
+            // },
+            // 0x25 => Operation::Free {
+            //     ptr: self.consume_byte()?,
+            // },
+            // 0x26 => Operation::Memset {
+            //     dest: self.consume_byte()?,
+            //     n: self.consume_byte()?,
+            //     value: self.consume_byte()?,
+            // },
+            // 0x27 => Operation::Memcpy {
+            //     dest: self.consume_byte()?,
+            //     n: self.consume_byte()?,
+            //     src: self.consume_byte()?,
+            // },
+            0x1c => Operation::Itof {
+                destf: self.consume_byte()?,
+                srci: self.consume_byte()?,
+            },
+            0x1d => Operation::Ftoi {
+                desti: self.consume_byte()?,
+                srcf: self.consume_byte()?,
+            },
+            0x1e => Operation::Fadd {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x1f => Operation::Fsub {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x20 => Operation::Fmult {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x21 => Operation::Fdiv {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x22 => Operation::Fmod {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x23 => Operation::Mod {
+                dest: self.consume_byte()?,
+                op1: self.consume_byte()?,
+                op2: self.consume_byte()?,
+            },
+            0x24 => Operation::Int {
+                code: self.consume_constant()?,
+            },
+            0x25 => Operation::Pushi {
+                immediate: self.consume_constant()?,
+            },
+            0xfd => todo!(),
+            0xff => todo!(),
+            _ => panic!("unrecognized opcode {opcode:#x}"),
         };
-        let pc = self.registers.get_mut_register(PROGRAM_COUNTER)?;
-        let new_pos = pc.read() + (bytes_read as RegisterWidth);
-        very_verbose_println!("advancing pc {bytes_read} byte(s)");
-        pc.write(new_pos);
-        unsafe { GLOBAL_CLOCK += 1 }
+        Ok(operation)
+    }
+
+    fn execute(&mut self, operation: Operation) -> Result<(), ExecutionError> {
+        very_verbose_println!("exec {:?}", operation);
+        match operation {
+            Operation::Nop => log_disassembly!("nop"),
+            Operation::Cpy { dest, src } => {
+                let value = self.registers.read(src);
+                self.registers.write(dest, value);
+
+                log_disassembly!(
+                    "cpy {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(src)
+                );
+            }
+            Operation::Ldi { dest, src } => {
+                self.registers.write(dest, src);
+                log_disassembly!("ldi {}, ${}", self.registers.print(dest), src);
+            }
+
+            Operation::Load { dest, n, addr } => {
+                let n_val = self.registers.read(n);
+                let bytes = bytes_to_u64(&self.memory.read(addr, n_val)?);
+                self.registers.write(dest, bytes);
+
+                log_disassembly!(
+                    "load {}, {}, ${}",
+                    self.registers.print(dest),
+                    self.registers.print(n),
+                    addr
+                );
+            }
+            Operation::Store { dest, n, src } => {
+                let bytes = self.registers.read(src).to_le_bytes();
+                let n_val = self.registers.read(n);
+                let addr = self.registers.read(dest);
+                self.memory.write(addr, &bytes[0..n_val as usize])?;
+
+                log_disassembly!(
+                    "store {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(n),
+                    self.registers.print(src)
+                );
+            }
+            Operation::Add { dest, op1, op2 } => {
+                let sum = self
+                    .registers
+                    .read(op1)
+                    .wrapping_add(self.registers.read(op2));
+                self.registers.write(dest, sum);
+
+                log_disassembly!(
+                    "add {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(op1),
+                    self.registers.print(op2)
+                );
+            }
+            Operation::Sub { dest, op1, op2 } => {
+                let diff = self
+                    .registers
+                    .read(op1)
+                    .wrapping_sub(self.registers.read(op2));
+                self.registers.write(dest, diff);
+
+                log_disassembly!(
+                    "sub {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(op1),
+                    self.registers.print(op2)
+                );
+            }
+            Operation::Mult { dest, op1, op2 } => {
+                let result = self
+                    .registers
+                    .read(op1)
+                    .wrapping_mul(self.registers.read(op2));
+                self.registers.write(dest, result);
+
+                log_disassembly!(
+                    "mult {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(op1),
+                    self.registers.print(op2)
+                );
+            }
+            Operation::Div { dest, op1, op2 } => {
+                let op1_val = self.registers.read(op1);
+                let op2_val = self.registers.read(op2);
+                if op2_val == 0 {
+                    return Err(ExecutionError::new(format!(
+                        "division by zero error {op1} / {op2}",
+                    )));
+                }
+                let quotient = self.registers.read(op1).wrapping_div(op2_val);
+                self.registers.write(dest, quotient);
+
+                log_disassembly!(
+                    "div {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(op1),
+                    self.registers.print(op2)
+                );
+            }
+            Operation::Or { dest, op1, op2 } => {
+                let result = self.registers.read(op1) | self.registers.read(op2);
+                self.registers.write(dest, result);
+
+                log_disassembly!(
+                    "or {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(op1),
+                    self.registers.print(op2)
+                );
+            }
+            Operation::Xor { dest, op1, op2 } => {
+                let result = self.registers.read(op1) ^ self.registers.read(op2);
+                self.registers.write(dest, result);
+
+                log_disassembly!(
+                    "xor {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(op1),
+                    self.registers.print(op2)
+                );
+            }
+            Operation::And { dest, op1, op2 } => {
+                let result = self.registers.read(op1) & self.registers.read(op2);
+                self.registers.write(dest, result);
+
+                log_disassembly!(
+                    "and {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(op1),
+                    self.registers.print(op2)
+                );
+            }
+            Operation::Not { dest, op } => {
+                let result = !self.registers.read(op);
+                self.registers.write(dest, result);
+
+                log_disassembly!(
+                    "not {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(op),
+                );
+            }
+            Operation::Shl { dest, n, src } => {
+                let result = self.registers.read(src).shl(self.registers.read(n));
+                self.registers.write(dest, result);
+
+                log_disassembly!(
+                    "shl {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(n),
+                    self.registers.print(src)
+                );
+            }
+            Operation::Shr { dest, n, src } => {
+                let result = self.registers.read(src).shr(self.registers.read(n));
+                self.registers.write(dest, result);
+
+                log_disassembly!(
+                    "shr {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(n),
+                    self.registers.print(src)
+                );
+            }
+            Operation::Rotl { dest, n, src } => {
+                let result = self
+                    .registers
+                    .read(src)
+                    .rotate_left(self.registers.read(n) as u32);
+                self.registers.write(dest, result);
+                log_disassembly!(
+                    "or {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(n),
+                    self.registers.print(src)
+                );
+            }
+            Operation::Rotr { dest, n, src } => {
+                let result = self
+                    .registers
+                    .read(src)
+                    .rotate_right(self.registers.read(n) as u32);
+                self.registers.write(dest, result);
+                log_disassembly!(
+                    "or {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(n),
+                    self.registers.print(src)
+                );
+            }
+            Operation::Neg { dest, op } => {
+                let sign_mask: u64 = 0x80_00_00_00_00_00_00_00;
+                let result = self.registers.read(op) ^ sign_mask;
+                self.registers.write(dest, result);
+                log_disassembly!(
+                    "or {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(op),
+                );
+            }
+            Operation::Jmp { addr } => {
+                self.registers.write(PROGRAM_COUNTER, addr);
+                log_disassembly!("jmp ${addr}");
+            }
+            Operation::Jifz { addr, condition } => {
+                if condition == 0 {
+                    self.registers.write(PROGRAM_COUNTER, addr);
+                }
+                log_disassembly!("jifz {condition} ${addr}");
+            }
+            Operation::Jifnz { addr, condition } => {
+                if condition != 0 {
+                    self.registers.write(PROGRAM_COUNTER, addr);
+                }
+                log_disassembly!("jifnz {condition} ${addr}");
+            }
+            Operation::Inc { reg } => {
+                let inc = self.registers.read(reg).wrapping_add(1);
+                self.registers.write(reg, inc);
+                log_disassembly!("inc {}", self.registers.print(reg));
+            }
+            Operation::Dec { reg } => {
+                let inc = self.registers.read(reg).wrapping_sub(1);
+                self.registers.write(reg, inc);
+                log_disassembly!("inc {}", self.registers.print(reg));
+            }
+
+            Operation::Push { src } => {
+                let value = self.registers.read(src);
+
+                self.push(value)?;
+                log_disassembly!("push {}", self.registers.print(src));
+            }
+            Operation::Pop { dest } => {
+                let value = self.pop()?;
+                self.registers.write(dest, value);
+                log_disassembly!("pop {}", self.registers.print(dest));
+            }
+
+            Operation::Call { addr } => {
+                log_disassembly!("call ${}", addr);
+                let fp = self.registers.read(FRAME_POINTER);
+                let ra = self.registers.read(PROGRAM_COUNTER);
+                self.push(fp)?;
+                self.push(ra)?;
+                self.registers.write(PROGRAM_COUNTER, addr);
+            }
+            Operation::Ret => todo!(),
+            // Operation::Fopen {
+            //     dest_fd,
+            //     file_path_str_ptr,
+            //     file_path_str_len,
+            // } => {
+            //     let ptr = self.registers.read(file_path_str_ptr);
+            //     let len = self.registers.read(file_path_str_len);
+            //     let path = unsafe { String::from_utf8_unchecked(self.memory.read(ptr, len)?) }; // if this explodes then make checked
+
+            //     let fd = self.vm_host_bridge.fopen(&path)?;
+            //     self.registers.write(dest_fd, fd);
+
+            //     log_disassembly!(
+            //         "fopen {}, {}, {}",
+            //         self.registers.print(dest_fd),
+            //         self.registers.print(file_path_str_ptr),
+            //         self.registers.print(file_path_str_len),
+            //     );
+            // }
+            // Operation::Fread {
+            //     fd,
+            //     buf_ptr,
+            //     buf_len,
+            // } => {
+            //     let fd_val = self.registers.read(fd);
+            //     let ptr = self.registers.read(buf_ptr);
+            //     let len = self.registers.read(buf_len);
+
+            //     let bytes = self.vm_host_bridge.fread(fd_val, len as usize)?;
+            //     self.memory.write(ptr, &bytes)?;
+
+            //     log_disassembly!(
+            //         "fread {}, {}, {}",
+            //         self.registers.print(fd),
+            //         self.registers.print(buf_ptr),
+            //         self.registers.print(buf_len)
+            //     )
+            // }
+            // Operation::Fwrite {
+            //     fd,
+            //     buf_ptr,
+            //     buf_len,
+            // } => {
+            //     let fd_val = self.registers.read(fd);
+            //     let ptr = self.registers.read(buf_ptr);
+            //     let len = self.registers.read(buf_len);
+            //     let bytes = self.memory.read(ptr, len)?;
+            //     self.vm_host_bridge.fwrite(fd_val, &bytes)?;
+            //     log_disassembly!(
+            //         "fwrite {}, {}, {}",
+            //         self.registers.print(fd),
+            //         self.registers.print(buf_ptr),
+            //         self.registers.print(buf_len)
+            //     )
+            // }
+            // Operation::Fseek {
+            //     fd,
+            //     seek,
+            //     direction,
+            // } => {
+            //     let fd_val = self.registers.read(fd);
+            //     let seek_val = self.registers.read(seek);
+            //     let direction_val = self.registers.read(direction);
+            //     self.vm_host_bridge
+            //         .fseek(fd_val, seek_val as usize, direction_val as u8)?;
+
+            //     log_disassembly!(
+            //         "fseek {}, {}, {}",
+            //         self.registers.print(fd),
+            //         self.registers.print(seek),
+            //         self.registers.print(direction)
+            //     );
+            // }
+            // Operation::Fclose { fd } => {
+            //     let fd_val = self.registers.read(fd);
+            //     self.vm_host_bridge.fclose(fd_val)?;
+            //     log_disassembly!("fclose {}", self.registers.print(fd));
+            // }
+            // Operation::Malloc { dest_ptr, size } => {
+            //     let size_val = self.registers.read(size);
+            //     let ptr = self.memory.malloc(size_val)?;
+            //     self.registers.write(dest_ptr, ptr);
+            //     log_disassembly!(
+            //         "malloc {}, {}",
+            //         self.registers.print(dest_ptr),
+            //         self.registers.print(size)
+            //     );
+            // }
+            // Operation::Realloc {
+            //     dest_ptr,
+            //     ptr,
+            //     new_size,
+            // } => {
+            //     let size_val = self.registers.read(new_size);
+            //     let old_ptr = self.registers.read(ptr);
+            //     let new_ptr = self.memory.realloc(old_ptr, size_val)?;
+            //     self.registers.write(dest_ptr, new_ptr);
+            //     log_disassembly!(
+            //         "malloc {}, {}",
+            //         self.registers.print(dest_ptr),
+            //         self.registers.print(new_size)
+            //     );
+            // }
+            // Operation::Free { ptr } => {
+            //     let ptr_val = self.registers.read(ptr);
+            //     self.memory.free(ptr_val)?;
+            //     log_disassembly!("free {}", self.registers.read(ptr));
+            // }
+            // Operation::Memcpy { dest, n, src } => {
+            //     let dest_val = self.registers.read(dest);
+            //     let n_val = self.registers.read(n);
+            //     let src_val = self.registers.read(src);
+            //     self.memory.memcpy(dest_val, src_val, n_val)?;
+            //     log_disassembly!(
+            //         "memcpy {}, {}, {}",
+            //         self.registers.print(dest),
+            //         self.registers.print(n),
+            //         self.registers.print(src),
+            //     )
+            // }
+            // Operation::Memset { dest, n, value } => {
+            //     let dest_val = self.registers.read(dest);
+            //     let n_val = self.registers.read(n);
+            //     let val = self.registers.read(value);
+            //     self.memory.memset(dest_val, val as u8, n_val)?;
+            //     log_disassembly!(
+            //         "memcpy {}, {}, {}",
+            //         self.registers.print(dest),
+            //         self.registers.print(n),
+            //         self.registers.print(value),
+            //     )
+            // }
+            Operation::Itof { destf, srci } => {
+                let f = self.registers.read(srci) as f64;
+
+                self.registers.write(destf, unsafe { transmute(f) });
+
+                log_disassembly!(
+                    "itof {}, {}",
+                    self.registers.print_float(destf),
+                    self.registers.print(srci)
+                )
+            }
+            Operation::Ftoi { desti, srcf } => {
+                let i = self.registers.read(srcf) as u64;
+
+                self.registers.write(desti, i);
+
+                log_disassembly!(
+                    "itof {}, {}",
+                    self.registers.print(desti),
+                    self.registers.print_float(srcf)
+                )
+            }
+            Operation::Fadd { dest, op1, op2 } => {
+                let fop1: f64 = unsafe { transmute(self.registers.read(op1)) };
+                let fop2: f64 = unsafe { transmute(self.registers.read(op2)) };
+                let sum = fop1 + fop2;
+                self.registers.write(dest, unsafe { transmute(sum) });
+
+                log_disassembly!(
+                    "fadd {}, {}, {}",
+                    self.registers.print_float(dest),
+                    self.registers.print_float(op1),
+                    self.registers.print_float(op2)
+                );
+            }
+            Operation::Fsub { dest, op1, op2 } => {
+                let fop1: f64 = unsafe { transmute(self.registers.read(op1)) };
+                let fop2: f64 = unsafe { transmute(self.registers.read(op2)) };
+                let diff = fop1 - fop2;
+                self.registers.write(dest, unsafe { transmute(diff) });
+
+                log_disassembly!(
+                    "fsub {}, {}, {}",
+                    self.registers.print_float(dest),
+                    self.registers.print_float(op1),
+                    self.registers.print_float(op2)
+                );
+            }
+            Operation::Fmult { dest, op1, op2 } => {
+                let fop1: f64 = unsafe { transmute(self.registers.read(op1)) };
+                let fop2: f64 = unsafe { transmute(self.registers.read(op2)) };
+                let result = fop1 * fop2;
+                self.registers.write(dest, unsafe { transmute(result) });
+
+                log_disassembly!(
+                    "fmult {}, {}, {}",
+                    self.registers.print_float(dest),
+                    self.registers.print_float(op1),
+                    self.registers.print_float(op2)
+                );
+            }
+            Operation::Fdiv { dest, op1, op2 } => {
+                let fop1: f64 = unsafe { transmute(self.registers.read(op1)) };
+                let fop2: f64 = unsafe { transmute(self.registers.read(op2)) };
+                let sum = fop1 + fop2;
+                self.registers.write(dest, unsafe { transmute(sum) });
+
+                log_disassembly!(
+                    "fdiv {}, {}, {}",
+                    self.registers.print_float(dest),
+                    self.registers.print_float(op1),
+                    self.registers.print_float(op2)
+                );
+            }
+            Operation::Fmod { dest, op1, op2 } => {
+                let fop1: f64 = unsafe { transmute(self.registers.read(op1)) };
+                let fop2: f64 = unsafe { transmute(self.registers.read(op2)) };
+                let sum = fop1 % fop2;
+                self.registers.write(dest, unsafe { transmute(sum) });
+
+                log_disassembly!(
+                    "fdiv {}, {}, {}",
+                    self.registers.print_float(dest),
+                    self.registers.print_float(op1),
+                    self.registers.print_float(op2)
+                );
+            }
+            Operation::Mod { dest, op1, op2 } => {
+                let sum = self.registers.read(op1) % self.registers.read(op2);
+                self.registers.write(dest, sum);
+                log_disassembly!(
+                    "fdiv {}, {}, {}",
+                    self.registers.print(dest),
+                    self.registers.print(op1),
+                    self.registers.print(op2)
+                );
+            }
+
+            Operation::Breakpoint => todo!(),
+            Operation::HaltExe => todo!("haltexe"),
+
+            Operation::Int { code } => {
+                log_disassembly!("int {:#x}", code);
+                self.pending_interrupt = code as u8
+            }
+            Operation::Pushi { immediate } => {
+                log_disassembly!("pushi {immediate:#x}");
+                self.push(immediate)?
+            }
+        };
         Ok(())
     }
-    pub fn exec(&mut self) -> Result<(), VMError> {
-        verbose_println!("executing program ...");
-        let clock_sleep = std::time::Duration::from_millis(1000 / self.clock_speed as u64);
 
-        // verbose_println!("sleeping {clock_sleep}");
-        loop {
-            std::thread::sleep(clock_sleep);
-            self.step()?;
-            let byte_at_pc = self.read_from_pc()?;
-            if byte_at_pc == 0xFF {
-                self.memory.halt_exe_drop();
-                break;
-            };
-        }
+    pub fn step(&mut self) -> Result<(), ExecutionError> {
+        let op = self.fetch_decode()?;
+        self.execute(op)?;
+        unsafe { GLOBAL_PROGRAM_COUNTER = self.registers.read(PROGRAM_COUNTER) }
         Ok(())
     }
 
-    pub fn trinary_operation_decode(
-        &mut self,
-    ) -> Result<(&mut Register, Register, Register, usize), VMError> {
-        let bytes_read = REGISTER_BYTES * 3;
-        let operand_bytes = self.read_operands(bytes_read)?;
-        let op2 = self.registers.get_register(operand_bytes[2])?.clone();
-        let op1 = self.registers.get_register(operand_bytes[1])?.clone();
-        let dest = self.registers.get_mut_register(operand_bytes[0])?;
-        Ok((dest, op1, op2, bytes_read))
-    }
-    pub fn binary_operation_decode(&mut self) -> Result<(&mut Register, Register, usize), VMError> {
-        let bytes_read = REGISTER_BYTES * 2;
-        let operand_bytes = self.read_operands(bytes_read)?;
-        let op = self.registers.get_register(operand_bytes[1])?.clone();
-        let dest = self.registers.get_mut_register(operand_bytes[0])?;
-        Ok((dest, op, bytes_read))
-    }
-
-    pub fn unary_operation_decode(&mut self) -> Result<(&mut Register, usize), VMError> {
-        let bytes_read = REGISTER_BYTES;
-        let operand_bytes = self.read_operands(bytes_read)?;
-        let dest = self.registers.get_mut_register(operand_bytes[0])?;
-        Ok((dest, bytes_read))
-    }
-    pub fn jif_decode(
-        &mut self,
-    ) -> Result<(&mut Register, Register, RegisterWidth, usize), VMError> {
-        let bytes_read = REGISTER_BYTES + ADDRESS_BYTES;
-        let operand_bytes = self.read_operands(bytes_read)?;
-        let condition = self.registers.get_register(operand_bytes[0])?.clone();
-        let address = register_value_from_slice(&operand_bytes[1..]) as RegisterWidth;
-        let pc = self.registers.get_mut_register(PROGRAM_COUNTER)?;
-        Ok((pc, condition, address, bytes_read))
-    }
-
-    // stack grows downward
-    pub fn push(&mut self, value: RegisterWidth) -> Result<(), VMError> {
-        let sp_current = self.registers.get_register(STACK_POINTER)?.read();
-        let value_bytes = value.to_le_bytes();
-        let sp_new = sp_current - size_of::<RegisterWidth>() as RegisterWidth;
-        if sp_new < self.stack_max {
-            let position = self.registers.get_register(PROGRAM_COUNTER)?.read();
-            return Err(VMError::new(
-                VMErrorCode::StackOverflow,
-                format!("stack overflow at pc {position} sp {sp_new}"),
-            ));
-        } else if sp_new > self.stack_base {
-            let position = self.registers.get_register(PROGRAM_COUNTER)?.read();
-            return Err(VMError::new(
-                VMErrorCode::StackUnderflow,
-                format!("stack underflow at pc {position} sp {sp_new}"),
-            ));
-        }
-        self.memory.write_bytes(sp_current, &value_bytes)?;
-        let sp = self.registers.get_mut_register(STACK_POINTER)?;
-        sp.write(sp_new);
-        // if sp.read() < self.stack_max {
-        //     return Err(VMError::new(VMErrorCode::, reason))
-        // }
-        verbose_println!("pushed {value} onto the stack from sp {sp_current}");
+    fn break_point(&mut self) -> Result<(), ExecutionError> {
         Ok(())
     }
 
-    pub fn pop(&mut self) -> Result<RegisterWidth, VMError> {
-        let sp = self.registers.get_mut_register(STACK_POINTER)?;
-        let sp_current = sp.read();
-        let sp_new = sp_current + size_of::<RegisterWidth>() as RegisterWidth;
-        sp.write(sp_new);
-        let value_bytes = self.memory.read_bytes(sp_new, size_of::<RegisterWidth>())?;
-        let value = register_value_from_slice(&value_bytes);
-        // self.registers.get_mut_register(STACK_POINTER)?.write()?;
-        verbose_println!("popped {value} off the stack from sp {sp_new}");
+    pub fn push(&mut self, value: u64) -> Result<(), ExecutionError> {
+        let sp = self.registers.read(STACK_POINTER);
+        let sp_d = self.memory.push(sp, value)?;
+        self.registers.write(STACK_POINTER, sp_d);
+        Ok(())
+    }
+
+    pub fn pop(&mut self) -> Result<u64, ExecutionError> {
+        let sp = self.registers.read(STACK_POINTER);
+        let (sp_d, value) = self.memory.pop(sp)?;
+        self.registers.write(STACK_POINTER, sp_d);
         Ok(value)
     }
-}
-
-struct NISVCEF<'a> {
-    entry_point: VMAddress,
-    program_image: &'a [u8],
-    ram_image: &'a [u8],
-    debug_table: DebugTable,
-
-    program_len: usize,
-    ram_len: usize,
-    debug_len: usize,
-}
-impl<'a> fmt::Display for NISVCEF<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "HEADER: {}\n\tprogram_len::{}\n\tram_len::{}\n\tdebug_len::{}",
-            String::from_utf8(SIGNATURE.to_vec()).unwrap(),
-            self.program_len,
-            self.ram_len,
-            self.debug_len
-        )
-    }
-}
-impl<'a> NISVCEF<'a> {
-    fn new(file: &'a [u8]) -> Result<Self, VMError> {
-        verbose_println!("parsing NISVC executable format file ... ");
-        let mut head = 0;
-        let header_length = SIGNATURE.len() + (8 * 4);
-        let header_bytes = match file.get(head..head + header_length) {
-            Some(h) => h,
-            None => {
-                return Err(VMError {
-                    code: VMErrorCode::ExecFormatError,
-                    reason: "file has incomplete header or is not an executable file".to_string(),
-                })
-            }
-        };
-        let (program_length, ram_image_length, entry_point_address, debug_partition_length) =
-            NISVCEF::read_header(header_bytes)?;
-        head += header_length;
-
-        let program_image = match file.get(head..head + program_length) {
-            Some(p) => p,
-            None => {
-                return Err(VMError {
-                    code: VMErrorCode::ExecFormatError,
-                    reason: format!(
-                        "could not read program partition from {head}..{program_length}"
-                    ),
-                })
-            }
-        };
-        head += program_length;
-
-        let ram_image = match file.get(head..head + ram_image_length) {
-            Some(p) => p,
-            None => {
-                return Err(VMError {
-                    code: VMErrorCode::ExecFormatError,
-                    reason: format!(
-                        "could not read ram image partition from {head}..{ram_image_length}"
-                    ),
-                })
-            }
-        };
-        head += ram_image_length;
-
-        let debug_bytes = match file.get(head..head + debug_partition_length) {
-            Some(p) => p,
-            None => {
-                return Err(VMError {
-                    code: VMErrorCode::ExecFormatError,
-                    reason: format!(
-                        "could not read debug partition from {head}..{debug_partition_length}"
-                    ),
-                })
-            }
-        };
-        head += debug_partition_length;
-        let debug_table = DebugTable::new(debug_bytes);
-
-        Ok(Self {
-            entry_point: entry_point_address as VMAddress,
-            program_image,
-            ram_image,
-            debug_table,
-            program_len: program_length,
-            ram_len: ram_image_length,
-            debug_len: debug_partition_length,
-        })
-    }
-    fn read_header(header: &[u8]) -> Result<(usize, usize, usize, usize), VMError> {
-        // let header_iter = header.iter();
-        let mut head = 0;
-        let file_signature = &header[0..SIGNATURE.len()];
-        if file_signature != SIGNATURE {
-            return Err(VMError {
-                code: VMErrorCode::ExecFormatError,
-                reason: format!("invalid header"),
-            });
+    pub fn dump_stack(&mut self) -> Vec<u64> {
+        let mut stack_dump = Vec::<u64>::new();
+        while self.registers.read(STACK_POINTER) != self.memory.stack_start {
+            let popped = match self.pop() {
+                Ok(p) => p,
+                Err(_) => break,
+            };
+            stack_dump.push(popped);
         }
-        head += SIGNATURE.len();
-        let program_length = register_value_from_slice(&header[head..head + HEADER_ENTRY_LENGTH]);
-        head += HEADER_ENTRY_LENGTH;
-        let ram_image_length = register_value_from_slice(&header[head..head + HEADER_ENTRY_LENGTH]);
-        head += HEADER_ENTRY_LENGTH;
-        let entry_point_address =
-            register_value_from_slice(&header[head..head + HEADER_ENTRY_LENGTH]);
-        head += HEADER_ENTRY_LENGTH;
-        let debug_partition_length =
-            register_value_from_slice(&header[head..head + HEADER_ENTRY_LENGTH]);
-        Ok((
-            program_length as usize,
-            ram_image_length as usize,
-            entry_point_address as usize,
-            debug_partition_length as usize,
-        ))
+        stack_dump
     }
 }
 
-const HEADER_ENTRY_LENGTH: usize = 8;
-
-pub fn register_value_from_slice(slice: &[u8]) -> RegisterWidth {
-    let target_length = size_of::<usize>();
-    let mut byte_buf: Vec<u8> = Vec::with_capacity(target_length);
-    byte_buf.extend_from_slice(slice);
-    byte_buf.resize(target_length, 0);
-    let byte_array: [u8; size_of::<u64>()] = match byte_buf.try_into() {
-        Ok(arr) => arr,
-        Err(err) => panic!("failed to convert sequence despite padding :: {err:?}"),
-    };
-    RegisterWidth::from_le_bytes(byte_array)
+pub enum Kind {
+    Register,
+    MutableRegister,
+    Immediate,
+    Address,
 }
 
-struct DebugTable;
-impl DebugTable {
-    fn new(partition: &[u8]) -> Self {
-        verbose_println!("debug table not implemented yet");
-        Self
-    }
+pub struct DecodedInstruction {
+    pub immutable_registers: Vec<Register>,
+    pub mutable_registers: Vec<u8>,
+
+    pub addresses: Vec<u64>,
+    pub immediates: Vec<u64>,
 }
 
-type VMFD = usize;
+type VMFD = u64;
 pub struct VMHostBridge {
     stdin: Stdin,
     stdout: Stdout,
     stderr: Stderr,
     open_file_vector: HashMap<VMFD, (File, String)>,
-    next_vmfd: usize,
+    next_vmfd: VMFD,
 }
 
 // bridge isa
@@ -1066,27 +1093,23 @@ impl VMHostBridge {
             next_vmfd: 3,
         }
     }
-    fn get_file_from_vmfd(&mut self, vmfd: VMFD) -> Result<&mut (File, String), VMError> {
+    fn get_file_from_vmfd(&mut self, vmfd: VMFD) -> Result<&mut (File, String), ExecutionError> {
         let open_files = self.open_file_vector.len();
         match self.open_file_vector.get_mut(&vmfd) {
             Some(f) => Ok(f),
-            None => Err(VMError::new(
-                VMErrorCode::VMFileIOError,
-                format!(
-                    "vmfd-{vmfd} does not exist, there are {} open files",
-                    open_files
-                ),
-            )),
+            None => Err(ExecutionError::new(format!(
+                "vmfd-{vmfd} does not exist, there are {} open files",
+                open_files
+            ))),
         }
     }
-    pub fn fopen(&mut self, file_path: &str) -> Result<VMFD, VMError> {
+    pub fn fopen(&mut self, file_path: &str) -> Result<VMFD, ExecutionError> {
         let file = match File::open(file_path) {
             Ok(file) => file,
             Err(why) => {
-                return Err(VMError::new(
-                    VMErrorCode::HostFileIOError,
-                    format!("failed to open host file {file_path} :: {why}"),
-                ))
+                return Err(ExecutionError::new(format!(
+                    "failed to open host file {file_path} :: {why}"
+                )))
             }
         };
         let vmfd = self.next_vmfd;
@@ -1098,35 +1121,19 @@ impl VMHostBridge {
         verbose_println!("opened file {file_path} as vmfd-{vmfd}");
         Ok(vmfd)
     }
-    pub fn fclose(&mut self, vmfd: VMFD) -> Result<(), VMError> {
+    pub fn fclose(&mut self, vmfd: VMFD) -> Result<(), ExecutionError> {
         match vmfd {
-            0 => {
-                return Err(VMError::new(
-                    VMErrorCode::VMFileIOError,
-                    format!("cannot close stdin"),
-                ))
-            }
-            1 => {
-                return Err(VMError::new(
-                    VMErrorCode::HostFileIOError,
-                    format!("cannot cloes stdout"),
-                ))
-            }
-            2 => {
-                return Err(VMError::new(
-                    VMErrorCode::HostFileIOError,
-                    format!("cannot close stderr"),
-                ))
-            }
+            0 => return Err(ExecutionError::new(format!("cannot close stdin"))),
+            1 => return Err(ExecutionError::new(format!("cannot cloes stdout"))),
+            2 => return Err(ExecutionError::new(format!("cannot close stderr"))),
             _ => {
                 // let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
                 let (file, file_path) = match self.open_file_vector.remove(&vmfd) {
                     Some(entry) => entry,
                     None => {
-                        return Err(VMError::new(
-                            VMErrorCode::VMFileIOError,
-                            format!("{vmfd} is not an open file handle"),
-                        ))
+                        return Err(ExecutionError::new(format!(
+                            "{vmfd} is not an open file handle"
+                        )))
                     }
                 };
                 drop(file);
@@ -1135,30 +1142,23 @@ impl VMHostBridge {
             }
         }
     }
-    pub fn fwrite(&mut self, vmfd: VMFD, buf: &[u8]) -> Result<(), VMError> {
+    pub fn fwrite(&mut self, vmfd: VMFD, buf: &[u8]) -> Result<(), ExecutionError> {
         match vmfd {
-            0 => {
-                return Err(VMError::new(
-                    VMErrorCode::VMFileIOError,
-                    format!("cannot write to stdin"),
-                ))
-            }
+            0 => return Err(ExecutionError::new(format!("cannot write to stdin"))),
             1 => match self.stdout.write_all(buf) {
                 Ok(_) => Ok(()),
                 Err(e) => {
-                    return Err(VMError::new(
-                        VMErrorCode::HostFileIOError,
-                        format!("failed to write to stdout :: {e}"),
-                    ))
+                    return Err(ExecutionError::new(format!(
+                        "failed to write to stdout :: {e}"
+                    )))
                 }
             },
             2 => match self.stderr.write_all(buf) {
                 Ok(_) => Ok(()),
                 Err(e) => {
-                    return Err(VMError::new(
-                        VMErrorCode::HostFileIOError,
-                        format!("failed to write to stderr :: {e}"),
-                    ))
+                    return Err(ExecutionError::new(format!(
+                        "failed to write to stderr :: {e}"
+                    )))
                 }
             },
             _ => {
@@ -1167,49 +1167,36 @@ impl VMHostBridge {
                     Ok(_) => Ok(()),
 
                     Err(e) => {
-                        return Err(VMError::new(
-                            VMErrorCode::HostFileIOError,
-                            format!("failed to write to {file_path} :: {e}"),
-                        ))
+                        return Err(ExecutionError::new(format!(
+                            "failed to write to {file_path} :: {e}"
+                        )))
                     }
                 }
             }
         }
     }
 
-    pub fn fread(&mut self, vmfd: VMFD, length: usize) -> Result<Vec<u8>, VMError> {
+    pub fn fread(&mut self, vmfd: VMFD, length: usize) -> Result<Vec<u8>, ExecutionError> {
         let mut buf: Vec<u8> = vec![0u8; length];
         match vmfd {
             0 => match self.stdin.read(&mut buf) {
                 Ok(bytes_read) => (),
                 Err(e) => {
-                    return Err(VMError::new(
-                        VMErrorCode::HostFileIOError,
-                        format!("failed to read from stdin :: {e}"),
-                    ))
+                    return Err(ExecutionError::new(format!(
+                        "failed to read from stdin :: {e}"
+                    )))
                 }
             },
-            1 => {
-                return Err(VMError::new(
-                    VMErrorCode::VMFileIOError,
-                    format!("cannot read from stdout"),
-                ))
-            }
-            2 => {
-                return Err(VMError::new(
-                    VMErrorCode::VMFileIOError,
-                    format!("cannot read from stderr"),
-                ))
-            }
+            1 => return Err(ExecutionError::new(format!("cannot read from stdout"))),
+            2 => return Err(ExecutionError::new(format!("cannot read from stderr"))),
             _ => {
                 let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
                 match file.read(&mut buf) {
                     Ok(_) => (),
                     Err(e) => {
-                        return Err(VMError::new(
-                            VMErrorCode::HostFileIOError,
-                            format!("failed to read from {file_path} :: {e}"),
-                        ))
+                        return Err(ExecutionError::new(format!(
+                            "failed to read from {file_path} :: {e}"
+                        )))
                     }
                 }
             }
@@ -1217,79 +1204,49 @@ impl VMHostBridge {
         Ok(buf)
     }
 
-    pub fn fseek(&mut self, vmfd: VMFD, amount: usize, direction: u8) -> Result<(), VMError> {
+    pub fn fseek(
+        &mut self,
+        vmfd: VMFD,
+        amount: usize,
+        direction: u8,
+    ) -> Result<(), ExecutionError> {
         let offset: i64 = if direction == 1 {
             amount as i64 * -1
         } else if direction == 0 {
             amount as i64
         } else {
-            return Err(VMError::new(
-                VMErrorCode::HostFileIOError,
-                format!("invalid seek direction"),
-            ));
+            return Err(ExecutionError::new(format!("invalid seek direction")));
         };
         match vmfd {
-            0 => {
-                return Err(VMError::new(
-                    VMErrorCode::VMFileIOError,
-                    format!("cannot seek stdin"),
-                ))
-            }
-            1 => {
-                return Err(VMError::new(
-                    VMErrorCode::HostFileIOError,
-                    format!("cannot seek stdout"),
-                ))
-            }
-            2 => {
-                return Err(VMError::new(
-                    VMErrorCode::HostFileIOError,
-                    format!("cannot seek stderr"),
-                ))
-            }
+            0 => return Err(ExecutionError::new(format!("cannot seek stdin"))),
+            1 => return Err(ExecutionError::new(format!("cannot seek stdout"))),
+            2 => return Err(ExecutionError::new(format!("cannot seek stderr"))),
             _ => {
                 let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
                 match file.seek_relative(offset) {
                     Ok(_) => Ok(()),
 
                     Err(e) => {
-                        return Err(VMError::new(
-                            VMErrorCode::HostFileIOError,
-                            format!("failed to write to {file_path} :: {e}"),
-                        ))
+                        return Err(ExecutionError::new(format!(
+                            "failed to write to {file_path} :: {e}"
+                        )))
                     }
                 }
             }
         }
     }
-    pub fn ftell(&mut self, vmfd: VMFD) -> Result<usize, VMError> {
+    pub fn ftell(&mut self, vmfd: VMFD) -> Result<usize, ExecutionError> {
         match vmfd {
-            0 => {
-                return Err(VMError::new(
-                    VMErrorCode::VMFileIOError,
-                    format!("cannot tell stdin"),
-                ))
-            }
-            1 => {
-                return Err(VMError::new(
-                    VMErrorCode::HostFileIOError,
-                    format!("cannot tell stdout"),
-                ))
-            }
-            2 => {
-                return Err(VMError::new(
-                    VMErrorCode::HostFileIOError,
-                    format!("cannot tell stderr"),
-                ))
-            }
+            0 => return Err(ExecutionError::new(format!("cannot tell stdin"))),
+            1 => return Err(ExecutionError::new(format!("cannot tell stdout"))),
+            2 => return Err(ExecutionError::new(format!("cannot tell stderr"))),
             _ => {
                 let (file, file_path) = self.get_file_from_vmfd(vmfd)?;
                 match file.stream_position() {
                     Ok(pos) => Ok(pos as usize),
-                    Err(err) => Err(VMError::new(
-                        VMErrorCode::HostFileIOError,
-                        format!("failed to read stream position of vmfd-{vmfd} :: {err}"),
-                    )),
+                    Err(err) => Err(ExecutionError::new(format!(
+                        "failed to read stream position of vmfd-{vmfd} :: {err}"
+                    ))),
                 }
             }
         }

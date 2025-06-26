@@ -1,124 +1,107 @@
-use std::{path::Path, process::exit, u64};
+// nisvc virtual machine rewrite
+#![allow(static_mut_refs)]
 
-use arg_parser::{FlagArg, Flags};
-use colorize::AnsiColor;
-use constant::{DEFAULT_CLOCK_SPEED, NAME};
-// use cpu::Runtime;
-use cpu::{VMError, VMErrorCode};
-// use shell::Shell;
-// main.rs
-//
+mod bridge;
 mod constant;
-// mod cpu;
-mod arg_parser;
 mod cpu;
-mod isa;
+mod gpu;
+mod kernel;
+mod loader;
 mod memory;
-mod mmio;
 mod opcode;
-mod shell;
-static mut VERBOSE_FLAG: usize = 0;
-static mut DISASSEMBLE: bool = false;
-static mut VERY_VERBOSE_FLAG: bool = false;
-static mut VERY_VERY_VERBOSE_FLAG: bool = false;
-static mut INPUT_FLAG: bool = false;
-static mut OUTPUT_FLAG: bool = false;
-// static mut CLOCK_SPEED_MS: usize = 5; //ms
-static mut GLOBAL_CLOCK: usize = 0000;
+use std::fmt;
 
-enum DisplayMode {
-    Window,
-    Stdout,
+// use colorize::AnsiColor;
+use crate::constant::NAME;
+use clap::Parser;
+use crossterm::style::Stylize;
+use kernel::{Kernel, SILENCE_KERNEL};
+
+struct ExecutionError {
+    error: String,
 }
-fn main() -> Result<(), VMError> {
-    let cli_args: Vec<String> = std::env::args().collect();
-    let flag_definitions = &[
-        FlagArg::new("shell", 's', 0),
-        FlagArg::new("verbose", 'v', 0),
-        FlagArg::new("disassemble", 'd', 0),
-        FlagArg::new("input", 'i', 0),
-        FlagArg::new("output", 'o', 0),
-        FlagArg::new("clock-speed", 'c', 1),
-        FlagArg::new("display", 'D', 1),
-        FlagArg::new("ignore-breakpoints", 'b', 0),
-    ];
-    let flags = Flags::new(flag_definitions);
-    let parsed_args = match arg_parser::ParsedCLIArgs::parse_arguments(&flags, &cli_args) {
-        Ok(args) => args,
-        Err(why) => return Err(VMError::new(VMErrorCode::CLIArgError, why)),
-    };
 
-    let mut file: String = if let Some(f) = parsed_args.raw.get(0) {
-        f.to_string()
-    } else {
-        return Err(VMError::new(
-            VMErrorCode::CLIArgError,
-            "no input file".to_string(),
-        ));
-    };
-    let mut is_shell_instance = false;
-    let mut clock_speed_hz = DEFAULT_CLOCK_SPEED;
-    let mut display = DisplayMode::Window;
-    let mut ignore_breakpoints = false;
-    for arg in parsed_args.flags {
-        match arg.name {
-            "ignore-breakpoints" => ignore_breakpoints = true,
-            "shell" => is_shell_instance = true,
-            "verbose" => unsafe { VERBOSE_FLAG += 1 },
-            "disassemble" => unsafe { DISASSEMBLE = true },
-            "input" => unsafe { INPUT_FLAG = true },
-            "output" => unsafe { OUTPUT_FLAG = true },
-            "display" => {
-                let mode_arg = arg.data[0];
-                display = match mode_arg {
-                    "window" => DisplayMode::Window,
-                    "stdout" => DisplayMode::Stdout,
-                    _ => {
-                        return Err(VMError::new(
-                            VMErrorCode::CLIArgError,
-                            format!(
-                            "{mode_arg} is not a valid mode of {}, available are window and stdout",
-                            arg.name
-                        ),
-                        ))
-                    }
-                };
-            }
-            "clock-speed" => {
-                clock_speed_hz = match arg.data[0].parse() {
-                    Ok(hz) => hz,
-                    Err(why) => {
-                        return Err(VMError::new(
-                            VMErrorCode::CLIArgError,
-                            format!("invalid clock speed {} :: {}", arg.data[0], why),
-                        ))
-                    }
-                }
-            }
-            _ => panic!("invalid argument snuck past parser"),
+impl ExecutionError {
+    fn new(error: String) -> Self {
+        Self { error }
+    }
+    fn prepend(mut self, prelude: String) -> Self {
+        self.error = prelude + self.error.as_str();
+        self
+    }
+}
+
+impl fmt::Display for ExecutionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", "error >".on_red(), self.error) // make cooler
+    }
+}
+
+static mut GLOBAL_CLOCK: usize = 0;
+
+static mut GLOBAL_PROGRAM_COUNTER: u64 = 0;
+
+static mut DISASSEMBLE: bool = true;
+static mut VERBOSE_FLAG: usize = 0;
+static mut OUTPUT_FLAG: bool = false;
+static mut INPUT_FLAG: bool = false;
+
+#[derive(Parser)]
+struct Args {
+    #[arg()]
+    program: String,
+    #[arg(short, long, default_value_t = 0)]
+    verbosity: usize,
+    #[arg(short, long, default_value_t = false)]
+    disassemble: bool,
+}
+
+fn main() {
+    match real_main() {
+        Ok(()) => (),
+        Err(e) => println!("{e}"),
+    }
+}
+
+fn real_main() -> Result<(), ExecutionError> {
+    let args = Args::parse();
+    unsafe {
+        DISASSEMBLE = args.disassemble;
+        VERBOSE_FLAG = args.verbosity;
+    }
+
+    let mut kernel = Kernel::new(1_000_000, 1_0000);
+    kernel.system.load(&args.program)?;
+    // kernel.gpu.as_mut().unwrap().renderer.present();
+    match kernel.run() {
+        Ok(()) => (),
+        Err(e) => {
+            // println!("stack dump:\n{:#?}", kernel.system.dump_stack());
+            kernel.core_dump()?;
+            println!("{e}");
         }
-    }
-    let mut vm = cpu::CPU::new(clock_speed_hz, display, ignore_breakpoints)?;
-
-    vm.load(&file)?;
-    if is_shell_instance {
-        vm.debug_shell()?;
-    } else {
-        vm.exec()?;
-    }
+    };
+    // kernel.core_dump()?;
     Ok(())
 }
 
-fn handle_fatal_vm_err(err: VMError) -> ! {
-    println!("{err}");
-    exit(1)
-}
 fn _log_disassembly(msg: &str) {
     unsafe {
         if DISASSEMBLE {
             println!(
-                "{NAME}: {GLOBAL_CLOCK:0>4x}: {} {}",
-                "disassembled:".green(),
+                "{}: {msg}",
+                format!("{GLOBAL_PROGRAM_COUNTER:0>4x}").on_dark_green()
+            );
+        }
+    }
+}
+
+fn _kernel_log(msg: &str) {
+    unsafe {
+        if !SILENCE_KERNEL {
+            println!(
+                "{}: {}",
+                format!("{GLOBAL_PROGRAM_COUNTER:0>4x} NFK:").on_dark_blue(),
                 msg
             )
         }
@@ -178,6 +161,11 @@ fn _very_very_verbose_println(msg: &str) {
 #[macro_export]
 macro_rules! log_disassembly {
     ($($arg:tt)*) => (crate::_log_disassembly(&format!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! kernel_log {
+    ($($arg:tt)*) => (crate::_kernel_log(&format!($($arg)*)));
 }
 
 #[macro_export]
