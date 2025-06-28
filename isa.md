@@ -21,7 +21,7 @@ the first register listed and be marked as (dest)
  	```asm
  	load r1,r2,r3
 	```
-- *store <register(ptr)> <register(length> <register(src)>*
+- **store <register(ptr)> <register(length> <register(src)>**
 	writes the value of src to memory starting at ptr
 	and extending for length bytes
 	 ```asm
@@ -202,26 +202,3 @@ heap
 	pop pc
 	pop fp
 	```
-
-## IO
-
-- *fopen <register(dest)> <register(ptr)> register(len)*
-	attempts to open a file on the host using a string path,  returns file descriptor in dest
-	(current impl has crash on filenotfound)
-	```asm
-	fopen r3,r2,r1
-	```
-
-- *fread <register(fd)> <register(buf)> register(len)*
-	attempts to read from fd until the buffer is full (len)
-	```asm
-	fread r3,r2,r1
-	```
-- *fwrite <register(fd)> <register(buf)> register(len)*
-	attempts to write the contents of a buffer to fd
-- *fseek <register(fd)> <register(n)> <register(bool)>*
-	attempts to move the file head of fd by n bytes,
-	(bool probably will be deprecated as interpreting
-	register as signed would be better)
-- *fclose <register(fd)>*
-	closes a file

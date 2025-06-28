@@ -7,7 +7,12 @@ use std::{
 use crossterm::style::Stylize;
 use sdl2::{libc::MS_SILENT, sys::exit};
 
-use crate::{constant::STACK_POINTER, cpu::CPU, kernel_log, ExecutionError, _kernel_log, gpu::GPU};
+use crate::{
+    constant::{MEM_HEAP, MEM_INVALID, MEM_STACK, MEM_STATIC, STACK_POINTER},
+    cpu::CPU,
+    kernel_log, ExecutionError, _kernel_log,
+    gpu::GPU,
+};
 
 pub static mut SILENCE_KERNEL: bool = false;
 /// - `0x01..0x30`: nhk interrupts
@@ -222,6 +227,26 @@ impl Kernel {
                 self.system.memory.write(ptr, arg.as_bytes())?;
                 self.system.push(ptr)?;
                 self.system.push(len)?;
+                Ok(())
+            }
+            0x17 => {
+                let addr = self.system.pop()?;
+                kernel_log!("memquery({addr})");
+                let region = if addr < self.system.memory.heap_start {
+                    MEM_STATIC // static binary address 0
+                } else if addr >= self.system.memory.heap_start
+                    && addr < self.system.memory.stack_start
+                {
+                    MEM_HEAP // heap 1
+                } else if addr >= self.system.memory.heap_start
+                    && addr >= self.system.memory.stack_start
+                    && addr <= self.system.memory.physical.len() as u64
+                {
+                    MEM_STACK // stack
+                } else {
+                    MEM_INVALID // out of bounds 3
+                };
+                self.system.push(region)?;
                 Ok(())
             }
         }

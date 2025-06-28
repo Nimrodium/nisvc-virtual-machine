@@ -1,4 +1,4 @@
-# NHK Syscalls
+# NKS Syscalls
 - 0x01 **[open(2)](#open)**
 - 0x02 **[write(3)](#write)**
 - 0x03 **[read(3)](#read)**
@@ -21,6 +21,7 @@
 - 0x14 **[kill(0)](#kill)**
 - 0x15 **[get_argc(0)](#get_argc)**
 - 0x16 **[get_argv(1)](#get_argv)**
+- 0x17 **[memquery(1)](#memquery)**
 # open
 1Interrupt Code: `0x01`
 ## C notation
@@ -166,3 +167,21 @@ get argument from cmdline at index </br>
 
 ## notes
 the supervisor copies the argument string into dynamically allocated guest memory, for proper memory management this pointer should be explicitly freed after use
+
+# memquery
+Interrupt Code 0x17
+query where a memory address resides in the memory map
+
+## Arguments
+- memory address
+
+## Returns
+enum
+  - 0
+  > static image
+  - 1
+  > heap
+  - 2
+  > stack
+  - 3
+  > out of bounds
