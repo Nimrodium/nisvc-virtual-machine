@@ -2,25 +2,27 @@ use std::{
     collections::HashMap,
     fs::{File, Metadata},
     io::{stderr, stdin, stdout, Read, Seek, Stderr, Stdin, Stdout, Write},
+    time::Duration,
 };
 
 use crossterm::style::Stylize;
 use sdl2::{libc::MS_SILENT, sys::exit};
 
 use crate::{
-    constant::{MEM_HEAP, MEM_INVALID, MEM_STACK, MEM_STATIC, STACK_POINTER},
+    constant::{DEFAULT_CLOCK_SPEED, MEM_HEAP, MEM_INVALID, MEM_STACK, MEM_STATIC, STACK_POINTER},
     cpu::CPU,
     kernel_log, ExecutionError, _kernel_log,
     gpu::GPU,
 };
 
-pub static mut SILENCE_KERNEL: bool = false;
+pub static mut KERNEL_LOG: bool = false;
 /// - `0x01..0x30`: nhk interrupts
 /// - `0x31..0xfe`: program defined interrupts
 /// - `0xff`: hard execution stop
 pub struct Kernel {
     pub system: CPU,
     pub gpu: Option<GPU>,
+    clock_speed: f32,
     user_interrupt_vector: [u64; 205],
     breakpoint_vector: Vec<u64>,
     file_descriptor_vector: HashMap<u64, IOInterface>,
@@ -30,7 +32,7 @@ pub struct Kernel {
     // frame_buffer_ptr: u64,
 }
 impl Kernel {
-    pub fn new(cmdline: Vec<String>, heap: u64, stack: u64) -> Self {
+    pub fn new(cmdline: Vec<String>, heap: u64, stack: u64, clock_speed: f32) -> Self {
         let mut file_descriptor_vector = HashMap::new();
         file_descriptor_vector.insert(0, IOInterface::Stdin(stdin()));
         file_descriptor_vector.insert(1, IOInterface::Stdout(stdout()));
@@ -44,11 +46,12 @@ impl Kernel {
         Self {
             system: CPU::new(heap, stack),
             gpu: None,
+            clock_speed,
             user_interrupt_vector: [0; 205],
             breakpoint_vector: Vec::new(),
             file_descriptor_vector,
             next_fd: 3,
-            cores_dumped: 0, // frame_buffer_ptr:None,
+            cores_dumped: 0,
             cmdline,
         }
     }
@@ -109,7 +112,7 @@ impl Kernel {
             }
             0x06 => {
                 // silence print
-                unsafe { SILENCE_KERNEL = true };
+                unsafe { KERNEL_LOG = false };
                 Ok(())
             }
             0x07 => {
@@ -232,29 +235,21 @@ impl Kernel {
             0x17 => {
                 let addr = self.system.pop()?;
                 kernel_log!("memquery({addr})");
-                let region = if addr < self.system.memory.heap_start {
-                    MEM_STATIC // static binary address 0
-                } else if addr >= self.system.memory.heap_start
-                    && addr < self.system.memory.stack_start
-                {
-                    MEM_HEAP // heap 1
-                } else if addr >= self.system.memory.heap_start
-                    && addr >= self.system.memory.stack_start
-                    && addr <= self.system.memory.physical.len() as u64
-                {
-                    MEM_STACK // stack
-                } else {
-                    MEM_INVALID // out of bounds 3
-                };
-                self.system.push(region)?;
+                let region = self.system.memory.memquery(addr);
+                self.system.push(region as u64)?;
                 Ok(())
             }
         }
     }
 
     pub fn run(&mut self) -> Result<(), ExecutionError> {
+        self.core_dump()?;
+        let millis = (1000.0 * (1.0 / self.clock_speed)) as u64;
+        // println!("Cycle {millis}ms");
+        let cycle_duration = Duration::from_millis(millis);
+        println!("cycle duration: {millis}ms from {}Hz", self.clock_speed);
         loop {
-            // self.gpu_fb_refresh()?;
+            std::thread::sleep(cycle_duration);
             self.system.step()?;
             match self.system.pending_interrupt {
                 0x00 => continue,

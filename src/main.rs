@@ -12,10 +12,11 @@ mod opcode;
 use std::fmt;
 
 // use colorize::AnsiColor;
-use crate::constant::NAME;
+use crate::constant::{NAME, PROGRAM_COUNTER};
 use clap::Parser;
-use crossterm::style::Stylize;
-use kernel::{Kernel, SILENCE_KERNEL};
+use colorize::AnsiColor;
+// use crossterm::style::Stylize;
+use kernel::{Kernel, KERNEL_LOG};
 
 struct ExecutionError {
     error: String,
@@ -33,7 +34,7 @@ impl ExecutionError {
 
 impl fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", "error >".on_red(), self.error) // make cooler
+        write!(f, "{} {}", "error >".b_red().bold(), self.error) // make cooler
     }
 }
 
@@ -43,32 +44,48 @@ static mut GLOBAL_PROGRAM_COUNTER: u64 = 0;
 
 static mut DISASSEMBLE: bool = true;
 static mut VERBOSE_FLAG: usize = 0;
+
 // static mut OUTPUT_FLAG: bool = false;
 // static mut INPUT_FLAG: bool = false;
 
 #[derive(Parser)]
 struct Args {
     #[arg()]
+    /// NEF executable
     program: String,
+    /// enable verbose logging
     #[arg(short, long, default_value_t = 0)]
     verbosity: usize,
+    /// enable printing dissassembly
     #[arg(short, long, default_value_t = false)]
     disassemble: bool,
+    /// enable NKS syscall logging
+    #[arg(short, long, default_value_t = false)]
+    kernel: bool,
     #[arg(long)]
     debug: bool,
     #[arg(long)]
     bkoffset: Option<String>,
-    #[arg(long)]
-    heap: Option<u64>,
-    #[arg(long)]
-    stack: Option<u64>,
+    /// allocated heap memory size in bytes
+    #[arg(long, default_value_t = 1_000_000)]
+    heap: u64,
+    /// allocated stack memory size in bytes
+    #[arg(long, default_value_t = 1_0000)]
+    stack: u64,
+    /// additional arguments passed to the executable
     cmdline: Vec<String>,
+    /// override executable's entrypoint
+    #[arg(short, long)]
+    entry_point: Option<String>,
+    /// override vm clock speed Hz
+    #[arg(short, long, default_value_t = 1000.0)]
+    clockspeed: f32,
 }
 
 fn main() {
     match real_main() {
         Ok(()) => (),
-        Err(e) => unsafe { println!("INTERNAL FAULT @ PC{GLOBAL_PROGRAM_COUNTER}: {e}") },
+        Err(e) => println!("{e}"),
     }
 }
 
@@ -77,31 +94,46 @@ fn real_main() -> Result<(), ExecutionError> {
     unsafe {
         DISASSEMBLE = args.disassemble;
         VERBOSE_FLAG = args.verbosity;
+        KERNEL_LOG = args.kernel;
     }
 
-    let heap = if let Some(heap) = args.heap {
-        heap
-    } else {
-        1_000_000
-    };
-    let stack = if let Some(stack) = args.stack {
-        stack
-    } else {
-        1_0000
-    };
+    // let heap = if let Some(heap) = args.heap {
+    //     heap
+    // } else {
+    //     1_000_000
+    // };
+    // let stack = if let Some(stack) = args.stack {
+    //     stack
+    // } else {
+    //     1_0000
+    // };
     let cmdline = {
         let mut cmdline = vec![args.program.clone()];
         cmdline.extend(args.cmdline.clone());
         cmdline
     };
     println!("cmdline: {:?}", cmdline);
-    let mut kernel = Kernel::new(args.cmdline, heap, stack);
-    kernel.system.load(&args.program)?;
+    let mut kernel = Kernel::new(args.cmdline, args.heap, args.stack, args.clockspeed);
+    kernel
+        .system
+        .load(&args.program)
+        .map_err(|e| e.prepend("PROGRAM LOAD FAULT: ".to_string().yellow()))?;
+    if let Some(entry_override) = args.entry_point {
+        let addr =
+            u64::from_str_radix(entry_override.trim_start_matches("0x"), 16).map_err(|e| {
+                ExecutionError::new(format!("invalid entrypoint override {entry_override}"))
+            })?;
+        println!("overriding entrypoint: {addr:#x}");
+        kernel.system.registers.write(PROGRAM_COUNTER, addr);
+    }
     // kernel.gpu.as_mut().unwrap().renderer.present();
     match kernel.run() {
         Ok(()) => (),
-        Err(e) => {
+        Err(mut e) => {
             // println!("stack dump:\n{:#?}", kernel.system.dump_stack());
+            e = unsafe {
+                e.prepend(format!("INTERNAL FAULT @ {GLOBAL_PROGRAM_COUNTER:#x}: ").yellow())
+            };
             kernel.core_dump()?;
             println!("{e}");
         }
@@ -115,7 +147,7 @@ fn _log_disassembly(msg: &str) {
         if DISASSEMBLE {
             println!(
                 "{}: {msg}",
-                format!("{GLOBAL_PROGRAM_COUNTER:0>4x}").on_dark_green()
+                format!("{GLOBAL_PROGRAM_COUNTER:0>4x}").b_green()
             );
         }
     }
@@ -123,10 +155,10 @@ fn _log_disassembly(msg: &str) {
 
 fn _kernel_log(msg: &str) {
     unsafe {
-        if !SILENCE_KERNEL {
+        if KERNEL_LOG {
             println!(
                 "{}: {}",
-                format!("{GLOBAL_PROGRAM_COUNTER:0>4x} NKS:").on_dark_blue(),
+                format!("{GLOBAL_PROGRAM_COUNTER:0>4x} NKS:").b_green(),
                 msg
             )
         }

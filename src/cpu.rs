@@ -15,7 +15,7 @@ use crate::{
     log_disassembly,
     memory::{bytes_to_u64, Memory},
     opcode::Operation,
-    very_verbose_println, ExecutionError, GLOBAL_PROGRAM_COUNTER,
+    very_verbose_println, very_very_verbose_println, ExecutionError, GLOBAL_PROGRAM_COUNTER,
 };
 
 #[derive(Clone)]
@@ -180,6 +180,11 @@ impl Register {
             RegWindow::F => unsafe { self.internal.full },
         }
     }
+    // fn get_size(&self,window:RegWindow) -> usize {
+    //     match window {
+
+    //     }
+    // }
     // fn as_window_mut(&mut self, window: RegWindow) -> &mut Self {
     //     self.window = window;
     //     self
@@ -249,6 +254,27 @@ impl CPURegisters {
         let name = self.get_register(idx).name(window);
         let val: f64 = unsafe { transmute(self.read(register_handle)) };
         format!("{}{}", name.red(), format!("(0x{:0>2})", val).dark_blue())
+    }
+
+    pub fn get_bytelength(&self, register_handle: RegHandle) -> u64 {
+        let (_, window) = decode_register(register_handle);
+        match window {
+            RegWindow::B1 => 1,
+            RegWindow::B2 => 1,
+            RegWindow::B3 => 1,
+            RegWindow::B4 => 1,
+            RegWindow::B5 => 1,
+            RegWindow::B6 => 1,
+            RegWindow::B7 => 1,
+            RegWindow::B8 => 1,
+            RegWindow::Q1 => 2,
+            RegWindow::Q2 => 2,
+            RegWindow::Q3 => 2,
+            RegWindow::Q4 => 2,
+            RegWindow::L => 4,
+            RegWindow::H => 4,
+            RegWindow::F => 8,
+        }
     }
 }
 
@@ -320,7 +346,7 @@ impl CPU {
             0x03 => Operation::Load {
                 dest: self.consume_byte()?,
                 n: self.consume_byte()?,
-                addr: self.consume_constant()?,
+                src: self.consume_byte()?,
             },
             0x04 => Operation::Store {
                 dest: self.consume_byte()?,
@@ -462,7 +488,11 @@ impl CPU {
             0x25 => Operation::Pushi {
                 immediate: self.consume_constant()?,
             },
-            0xfd => todo!(),
+            0xfd => {
+                return Err(ExecutionError::new(format!(
+                    "malformed binary: attempted to execute uninitialized memory (opcode 0xfd)"
+                )))
+            }
             0xff => todo!(),
             _ => panic!("unrecognized opcode {opcode:#x}"),
         };
@@ -476,7 +506,7 @@ impl CPU {
             Operation::Cpy { dest, src } => {
                 let value = self.registers.read(src);
                 self.registers.write(dest, value);
-
+                // println!("you here? ");
                 log_disassembly!(
                     "cpy {}, {}",
                     self.registers.print(dest),
@@ -488,23 +518,26 @@ impl CPU {
                 log_disassembly!("ldi {}, ${}", self.registers.print(dest), src);
             }
 
-            Operation::Load { dest, n, addr } => {
+            Operation::Load { dest, n, src } => {
                 let n_val = self.registers.read(n);
-                let bytes = bytes_to_u64(&self.memory.read(addr, n_val)?);
-                self.registers.write(dest, bytes);
-
                 log_disassembly!(
-                    "load {}, {}, ${}",
+                    "load {}, {}, {}",
                     self.registers.print(dest),
                     self.registers.print(n),
-                    addr
+                    self.registers.print(src),
                 );
+                let bytes = bytes_to_u64(&self.memory.read(self.registers.read(src), n_val)?);
+                self.registers.write(dest, bytes);
             }
             Operation::Store { dest, n, src } => {
                 let bytes = self.registers.read(src).to_le_bytes();
                 let n_val = self.registers.read(n);
                 let addr = self.registers.read(dest);
-                self.memory.write(addr, &bytes[0..n_val as usize])?;
+                let max = self.registers.get_bytelength(src);
+                if n_val > max {
+                    let name = self.registers.print(src);
+                    return Err(ExecutionError::new(format!("Attempted to store {n_val} bytes from {name} to ${addr:#x} which are more bytes than are present in the register ({max}) ")));
+                }
 
                 log_disassembly!(
                     "store {}, {}, {}",
@@ -512,6 +545,7 @@ impl CPU {
                     self.registers.print(n),
                     self.registers.print(src)
                 );
+                self.memory.write(addr, &bytes[0..n_val as usize])?;
             }
             Operation::Add { dest, op1, op2 } => {
                 let sum = self
@@ -698,7 +732,7 @@ impl CPU {
             Operation::Dec { reg } => {
                 let inc = self.registers.read(reg).wrapping_sub(1);
                 self.registers.write(reg, inc);
-                log_disassembly!("inc {}", self.registers.print(reg));
+                log_disassembly!("dec {}", self.registers.print(reg));
             }
 
             Operation::Push { src } => {
@@ -717,143 +751,32 @@ impl CPU {
                 log_disassembly!("call ${}", addr);
                 let fp = self.registers.read(FRAME_POINTER);
                 let ra = self.registers.read(PROGRAM_COUNTER);
+                let sp = self.registers.read(STACK_POINTER);
+                self.registers.write(FRAME_POINTER, sp);
+                very_very_verbose_println!(
+                    "-- frame setup -- {})",
+                    self.registers.print(STACK_POINTER)
+                );
                 self.push(fp)?;
+                very_very_verbose_println!(
+                    "| fp {fp:#x} -- {} |",
+                    self.registers.print(STACK_POINTER)
+                );
                 self.push(ra)?;
+                very_very_verbose_println!(
+                    "| ra {ra:#x} -- {} |",
+                    self.registers.print(STACK_POINTER)
+                );
                 self.registers.write(PROGRAM_COUNTER, addr);
             }
-            Operation::Ret => todo!(),
-            // Operation::Fopen {
-            //     dest_fd,
-            //     file_path_str_ptr,
-            //     file_path_str_len,
-            // } => {
-            //     let ptr = self.registers.read(file_path_str_ptr);
-            //     let len = self.registers.read(file_path_str_len);
-            //     let path = unsafe { String::from_utf8_unchecked(self.memory.read(ptr, len)?) }; // if this explodes then make checked
+            Operation::Ret => {
+                log_disassembly!("ret");
+                let ra = self.pop()?;
+                let fp = self.pop()?;
+                self.registers.write(FRAME_POINTER, fp);
+                self.registers.write(PROGRAM_COUNTER, ra);
+            }
 
-            //     let fd = self.vm_host_bridge.fopen(&path)?;
-            //     self.registers.write(dest_fd, fd);
-
-            //     log_disassembly!(
-            //         "fopen {}, {}, {}",
-            //         self.registers.print(dest_fd),
-            //         self.registers.print(file_path_str_ptr),
-            //         self.registers.print(file_path_str_len),
-            //     );
-            // }
-            // Operation::Fread {
-            //     fd,
-            //     buf_ptr,
-            //     buf_len,
-            // } => {
-            //     let fd_val = self.registers.read(fd);
-            //     let ptr = self.registers.read(buf_ptr);
-            //     let len = self.registers.read(buf_len);
-
-            //     let bytes = self.vm_host_bridge.fread(fd_val, len as usize)?;
-            //     self.memory.write(ptr, &bytes)?;
-
-            //     log_disassembly!(
-            //         "fread {}, {}, {}",
-            //         self.registers.print(fd),
-            //         self.registers.print(buf_ptr),
-            //         self.registers.print(buf_len)
-            //     )
-            // }
-            // Operation::Fwrite {
-            //     fd,
-            //     buf_ptr,
-            //     buf_len,
-            // } => {
-            //     let fd_val = self.registers.read(fd);
-            //     let ptr = self.registers.read(buf_ptr);
-            //     let len = self.registers.read(buf_len);
-            //     let bytes = self.memory.read(ptr, len)?;
-            //     self.vm_host_bridge.fwrite(fd_val, &bytes)?;
-            //     log_disassembly!(
-            //         "fwrite {}, {}, {}",
-            //         self.registers.print(fd),
-            //         self.registers.print(buf_ptr),
-            //         self.registers.print(buf_len)
-            //     )
-            // }
-            // Operation::Fseek {
-            //     fd,
-            //     seek,
-            //     direction,
-            // } => {
-            //     let fd_val = self.registers.read(fd);
-            //     let seek_val = self.registers.read(seek);
-            //     let direction_val = self.registers.read(direction);
-            //     self.vm_host_bridge
-            //         .fseek(fd_val, seek_val as usize, direction_val as u8)?;
-
-            //     log_disassembly!(
-            //         "fseek {}, {}, {}",
-            //         self.registers.print(fd),
-            //         self.registers.print(seek),
-            //         self.registers.print(direction)
-            //     );
-            // }
-            // Operation::Fclose { fd } => {
-            //     let fd_val = self.registers.read(fd);
-            //     self.vm_host_bridge.fclose(fd_val)?;
-            //     log_disassembly!("fclose {}", self.registers.print(fd));
-            // }
-            // Operation::Malloc { dest_ptr, size } => {
-            //     let size_val = self.registers.read(size);
-            //     let ptr = self.memory.malloc(size_val)?;
-            //     self.registers.write(dest_ptr, ptr);
-            //     log_disassembly!(
-            //         "malloc {}, {}",
-            //         self.registers.print(dest_ptr),
-            //         self.registers.print(size)
-            //     );
-            // }
-            // Operation::Realloc {
-            //     dest_ptr,
-            //     ptr,
-            //     new_size,
-            // } => {
-            //     let size_val = self.registers.read(new_size);
-            //     let old_ptr = self.registers.read(ptr);
-            //     let new_ptr = self.memory.realloc(old_ptr, size_val)?;
-            //     self.registers.write(dest_ptr, new_ptr);
-            //     log_disassembly!(
-            //         "malloc {}, {}",
-            //         self.registers.print(dest_ptr),
-            //         self.registers.print(new_size)
-            //     );
-            // }
-            // Operation::Free { ptr } => {
-            //     let ptr_val = self.registers.read(ptr);
-            //     self.memory.free(ptr_val)?;
-            //     log_disassembly!("free {}", self.registers.read(ptr));
-            // }
-            // Operation::Memcpy { dest, n, src } => {
-            //     let dest_val = self.registers.read(dest);
-            //     let n_val = self.registers.read(n);
-            //     let src_val = self.registers.read(src);
-            //     self.memory.memcpy(dest_val, src_val, n_val)?;
-            //     log_disassembly!(
-            //         "memcpy {}, {}, {}",
-            //         self.registers.print(dest),
-            //         self.registers.print(n),
-            //         self.registers.print(src),
-            //     )
-            // }
-            // Operation::Memset { dest, n, value } => {
-            //     let dest_val = self.registers.read(dest);
-            //     let n_val = self.registers.read(n);
-            //     let val = self.registers.read(value);
-            //     self.memory.memset(dest_val, val as u8, n_val)?;
-            //     log_disassembly!(
-            //         "memcpy {}, {}, {}",
-            //         self.registers.print(dest),
-            //         self.registers.print(n),
-            //         self.registers.print(value),
-            //     )
-            // }
             Operation::Itof { destf, srci } => {
                 let f = self.registers.read(srci) as f64;
 

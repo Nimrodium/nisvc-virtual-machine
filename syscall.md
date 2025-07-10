@@ -71,6 +71,7 @@ Interrupt Code: 0x7
 Interrupt Code: 0x8
 # tty_abs_cursor
 Interrupt Code: 0x9
+
 # malloc
 Interrupt Code: 0xa
 ## C Notation

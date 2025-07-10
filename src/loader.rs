@@ -35,7 +35,10 @@ impl NISVCEF {
         // let break_points: Vec<u64> =
         //     build_breakpoint_vector(stream.by_ref().take(break_point_len as usize).collect())?; // convert to Vec<u64> likely gonna do some evil unsafe thing
         let debug_symbols_len = consume_double_word_vec(&mut stream)?;
+        let debug_symbols_len = 0;
         let debug_symbols_img: Vec<u8> = stream.by_ref().take(debug_symbols_len as usize).collect();
+        println!("entry_point: {entry_point:#x}\nprogram_img_len: {program_img_len:#x}\ndebug_symbols_len:{debug_symbols_len}\ndebug_symbols_img:{debug_symbols_img:x?}");
+
         let debug_symbols = DebugSymbols::load_symbols(&debug_symbols_img)?;
         Ok(Self {
             entry_point,
@@ -80,7 +83,9 @@ impl DebugSymbols {
         };
 
         let mut label = String::new();
-        for _ in 0..str_len {
+
+        for i in 0..str_len {
+            println!("{label} {i}");
             label.push(*stream.next().ok_or(ExecutionError::new(format!(
                 "error decoding label associated with address {addr:#x}"
             )))? as char);
@@ -89,7 +94,7 @@ impl DebugSymbols {
     }
 }
 
-/// consumes None if dw is incomplete
+/// returns None if dw is incomplete
 fn consume_double_word_ref(stream: &mut slice::Iter<'_, u8>) -> Option<u64> {
     let mut buf: [u8; 8] = [0; 8];
     for n in 0..8 {

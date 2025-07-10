@@ -8,8 +8,9 @@ pub const STACK_POINTER: u8 = 2;
 pub const FRAME_POINTER: u8 = 3;
 pub const SIGNATURE: &[u8] = b"NISVC-EF";
 pub const STACK_SIZE: u64 = 1000;
+pub const DEFAULT_CLOCK_SPEED: u64 = 1000; // steps per second
 
-pub const MEM_STATIC: u64 = 0;
-pub const MEM_HEAP: u64 = 1;
-pub const MEM_STACK: u64 = 2;
-pub const MEM_INVALID: u64 = 3;
+pub const MEM_STATIC: u8 = 0;
+pub const MEM_HEAP: u8 = 1;
+pub const MEM_STACK: u8 = 2;
+pub const MEM_INVALID: u8 = 3;

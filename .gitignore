@@ -3,5 +3,6 @@ nisvc.core*
 *.data*
 
 *.bin
+*.nef
 nisvc.out
 !.gitignore

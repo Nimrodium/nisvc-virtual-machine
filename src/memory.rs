@@ -1,6 +1,9 @@
 use std::mem::transmute;
 
-use crate::{constant::UNINITIALIZED_MEMORY, kernel_log, ExecutionError};
+use crate::{
+    constant::{MEM_HEAP, MEM_INVALID, MEM_STACK, MEM_STATIC, UNINITIALIZED_MEMORY},
+    kernel_log, very_very_verbose_println, ExecutionError,
+};
 const HPA_NODE_DATA_OFFSET: u64 = 9;
 const HPA_TAIL_SENTINEL_ADDRESS: u64 = 0;
 pub type nisvc_ptr = u64;
@@ -49,6 +52,22 @@ impl Memory {
         );
         Ok(())
     }
+    ///
+    pub fn memquery(&self, addr: u64) -> u8 {
+        if addr < self.heap_start {
+            MEM_STATIC // static binary address 0
+        } else if addr >= self.heap_start && addr < self.stack_start {
+            MEM_HEAP // heap 1
+        } else if addr >= self.heap_start
+            && addr >= self.stack_start
+            && addr <= self.physical.len() as u64
+        {
+            MEM_STACK // stack
+        } else {
+            MEM_INVALID // out of bounds 3
+        }
+    }
+
     pub fn read_byte(&self, address: u64) -> Result<u8, ExecutionError> {
         self.physical
             .get(address as usize)
@@ -70,18 +89,23 @@ impl Memory {
         Ok(())
     }
     pub fn read(&self, address: u64, n: u64) -> Result<Vec<u8>, ExecutionError> {
-        let mut buf = Vec::with_capacity(n as usize);
+        let mut bytes = Vec::with_capacity(n as usize);
         for i in address..address + n {
-            buf.push(self.read_byte(i)?);
+            bytes.push(self.read_byte(i)?);
         }
-        Ok(buf)
+        let strb = String::from_utf8_lossy(&bytes);
+        very_very_verbose_println!("reading {bytes:x?} | \"{strb}\" <- ${address}");
+        Ok(bytes)
     }
     pub fn write(&mut self, address: u64, bytes: &[u8]) -> Result<u64, ExecutionError> {
+        let strb = String::from_utf8_lossy(bytes);
+        very_very_verbose_println!("writing {bytes:x?} | \"{strb}\" -> ${address}");
         let mut bytes_wrote = 0;
         for i in 0..bytes.len() as u64 {
             self.write_byte(address + i, bytes[i as usize])?;
             bytes_wrote += 1;
         }
+
         Ok(bytes_wrote)
     }
     // /// (value,bytes_read)
@@ -97,14 +121,21 @@ impl Memory {
     }
     // returns stack pointer
     pub fn push(&mut self, stack_ptr: u64, value: u64) -> Result<u64, ExecutionError> {
-        let bytes_wrote = self.write(stack_ptr, &value.to_le_bytes())?;
-        Ok(stack_ptr + bytes_wrote)
+        let value_size = self.write(stack_ptr, &value.to_le_bytes())?;
+        let ptr = stack_ptr + value_size;
+        very_very_verbose_println!(
+            "STACKOP PUSH {value:#x}|{value} at sp {stack_ptr:#x} new sp {ptr:#x} (+{value_size})"
+        );
+        Ok(ptr)
     }
     // returns stack pointer and popped value
     pub fn pop(&mut self, stack_ptr: u64) -> Result<(u64, u64), ExecutionError> {
         let value_size = size_of::<u64>() as u64;
         let ptr = stack_ptr - value_size;
         let value = bytes_to_u64(&self.read(ptr, value_size)?);
+        very_very_verbose_println!(
+            "STACKOP POP {value:#x}|{value} at sp {stack_ptr:#x} new sp {ptr:#x} (-{value_size})"
+        );
         Ok((ptr, value))
     }
 
@@ -133,6 +164,7 @@ impl Memory {
     }
 
     pub fn realloc(&mut self, ptr: u64, new_size: u64) -> Result<u64, ExecutionError> {
+        // let copy: bool = self.memquery(ptr) != MEM_HEAP;
         let (_, current_next_ptr) = self.hpa_read_hpa_node(ptr)?;
         let (next_is_allocated, next_next) = self.hpa_read_hpa_node(current_next_ptr)?;
         let (_, next_next_next) = self.hpa_read_hpa_node(next_next)?;
@@ -316,8 +348,21 @@ impl Memory {
 }
 
 pub fn bytes_to_u64(bytes: &[u8]) -> u64 {
-    let mut buf: [u8; 8] = [0; 8];
-    buf.copy_from_slice(bytes);
+    // let u64size = size_of::<u64>();
+    let mut buf: [u8; size_of::<u64>()] = [0; size_of::<u64>()];
+    // let raw = bytes.as_ptr();
+    // println!("bytes slice size {}", bytes.len());
+    if bytes.len() > size_of::<u64>() {
+        panic!(
+            "attempted to build a u64 composed of more than {} bytes, byte slice: {bytes:?} len: {}",size_of::<u64>(),
+            bytes.len()
+        )
+    }
+    for (i, b) in bytes.iter().enumerate() {
+        // let buf.get(i).expect("attempted to build a u64 composed of more than 8 bytes, panic on access of buf[{i}] which is out of bounds")
+        buf[i] = *b;
+    }
+    // buf.copy_from_slice(bytes);
     u64::from_le_bytes(buf)
 }
 
