@@ -90,11 +90,11 @@ pub enum Operation {
     },
     Jifz {
         addr: u64,
-        condition: RegHandle,
+        condition_reg: RegHandle,
     },
     Jifnz {
         addr: u64,
-        condition: RegHandle,
+        condition_reg: RegHandle,
     },
 
     Inc {

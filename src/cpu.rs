@@ -420,11 +420,11 @@ impl CPU {
                 addr: self.consume_constant()?,
             },
             0x13 => Operation::Jifz {
-                condition: self.consume_byte()?,
+                condition_reg: self.consume_byte()?,
                 addr: self.consume_constant()?,
             },
             0x14 => Operation::Jifnz {
-                condition: self.consume_byte()?,
+                condition_reg: self.consume_byte()?,
                 addr: self.consume_constant()?,
             },
             // pr
@@ -712,17 +712,25 @@ impl CPU {
                 self.registers.write(PROGRAM_COUNTER, addr);
                 log_disassembly!("jmp ${addr}");
             }
-            Operation::Jifz { addr, condition } => {
-                if condition == 0 {
+            Operation::Jifz {
+                addr,
+                condition_reg,
+            } => {
+                let cond = self.registers.read(condition_reg);
+                if cond == 0 {
                     self.registers.write(PROGRAM_COUNTER, addr);
                 }
-                log_disassembly!("jifz {condition} ${addr}");
+                log_disassembly!("jifz {} ${addr}", self.registers.print(condition_reg));
             }
-            Operation::Jifnz { addr, condition } => {
-                if condition != 0 {
+            Operation::Jifnz {
+                addr,
+                condition_reg,
+            } => {
+                let cond = self.registers.read(condition_reg);
+                if cond != 0 {
                     self.registers.write(PROGRAM_COUNTER, addr);
                 }
-                log_disassembly!("jifnz {condition} ${addr}");
+                log_disassembly!("jifnz {} ${addr}", self.registers.print(condition_reg));
             }
             Operation::Inc { reg } => {
                 let inc = self.registers.read(reg).wrapping_add(1);
@@ -868,7 +876,7 @@ impl CPU {
                 let sum = self.registers.read(op1) % self.registers.read(op2);
                 self.registers.write(dest, sum);
                 log_disassembly!(
-                    "fdiv {}, {}, {}",
+                    "mod {}, {}, {}",
                     self.registers.print(dest),
                     self.registers.print(op1),
                     self.registers.print(op2)

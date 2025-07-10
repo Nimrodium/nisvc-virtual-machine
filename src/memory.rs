@@ -1,4 +1,4 @@
-use std::mem::transmute;
+use std::collections::BTreeSet;
 
 use crate::{
     constant::{MEM_HEAP, MEM_INVALID, MEM_STACK, MEM_STATIC, UNINITIALIZED_MEMORY},
@@ -6,7 +6,7 @@ use crate::{
 };
 const HPA_NODE_DATA_OFFSET: u64 = 9;
 const HPA_TAIL_SENTINEL_ADDRESS: u64 = 0;
-pub type nisvc_ptr = u64;
+// pub type nisvc_ptr = u64;
 pub struct Memory {
     pub physical: Vec<u8>,
     range: u64,
@@ -15,6 +15,8 @@ pub struct Memory {
     pub heap_start: u64,
     pub stack_start: u64,
     total_heap_allocations: u64,
+    /// record of all allocated block pointers
+    allocation_record: BTreeSet<u64>,
 }
 
 impl Memory {
@@ -27,6 +29,7 @@ impl Memory {
             heap_start: 0,
             stack_start: 0,
             total_heap_allocations: 0,
+            allocation_record: BTreeSet::new(),
         }
     }
     pub fn load(&mut self, image: Vec<u8>) -> Result<(), ExecutionError> {
@@ -108,14 +111,7 @@ impl Memory {
 
         Ok(bytes_wrote)
     }
-    // /// (value,bytes_read)
-    // pub fn read_immediate(&self, address: u64) -> Result<(u64, u64), ExecutionError> {
-    //     let size_byte = self.read_byte(address)?;
-    //     Ok((
-    //         bytes_to_u64(&self.read(address + 1, size_byte as u64)?),
-    //         (size_byte + 1) as u64,
-    //     ))
-    // }
+
     pub fn read_address(&self, address: u64) -> Result<u64, ExecutionError> {
         Ok(bytes_to_u64(&self.read(address, size_of::<u64>() as u64)?))
     }
@@ -160,6 +156,7 @@ impl Memory {
         let (_, old_next) = self.hpa_read_hpa_node(ptr)?;
         self.hpa_write_hpa_node(ptr, new_node_ptr, true)?;
         self.hpa_write_hpa_node(new_node_ptr, old_next, false)?;
+        self.allocation_record.insert(ptr);
         Ok(ptr)
     }
 
@@ -201,21 +198,18 @@ impl Memory {
             }
         }
     }
-    // fn hpa_realloc_mv(
-    //     &mut self,
-    //     ptr: u64,
-    //     current_size: u64,
-    //     new_size: u64,
-    // ) -> Result<u64, ExecutionError> {
-    //     let new_ptr = self.malloc(new_size)?;
-    //     self.memcpy(new_ptr, ptr, current_size)?;
-    //     self.hpa_write_hpa_node_allocation_status(ptr, false)?;
-    //     Ok::<u64, ExecutionError>(new_ptr)
-    // }
     pub fn free(&mut self, ptr: u64) -> Result<(), ExecutionError> {
+        let memresp = self.memquery(ptr);
+        if memresp != MEM_HEAP {
+            return Err(ExecutionError::new(format!(
+                "attempted to free non-heap memory, memquery({ptr}) -> {memresp}"
+            )));
+        }
+        let ptr = self.find_allocation_match(ptr)?;
         self.total_heap_allocations -= 1;
         self.hpa_write_hpa_node_allocation_status(ptr, false)?;
         self.hpa_defragment(ptr, false)?;
+        self.allocation_record.remove(&ptr);
         Ok(())
     }
 
@@ -239,7 +233,23 @@ impl Memory {
     // fn hpa_oom_recover(&mut self,size:u6) -> Result<(),ExecutionError>{
 
     // }
-
+    fn find_allocation_match(&self, ptr: u64) -> Result<u64, ExecutionError> {
+        if let Some(p) = self.allocation_record.get(&ptr) {
+            Ok(*p)
+        } else {
+            // BTreeSet is ordered so stop once p > ptr and return last ptr
+            let mut last_ptr = None;
+            for p in &self.allocation_record {
+                last_ptr = Some(*p);
+                if *p > ptr {
+                    break;
+                }
+            }
+            last_ptr.ok_or(ExecutionError::new(format!(
+                "no lesser ptr found for {ptr}, are any blocks allocated?"
+            )))
+        }
+    }
     /// returns a pointer to a free memory region that can be allocated into or None if none exists which is big enough
     fn hpa_get_allocation_canditate(&mut self, size: u64) -> Result<u64, ExecutionError> {
         if let Some(final_canditate) = self.hpa_get_allocation_canditate_internal(size)? {
@@ -369,14 +379,3 @@ pub fn bytes_to_u64(bytes: &[u8]) -> u64 {
 fn hpa_block_size(ptr: u64, next_ptr: u64) -> u64 {
     next_ptr - HPA_NODE_DATA_OFFSET - ptr
 }
-
-// fn byte_to_bool(byte:u8) -> Result<bool,ExecutionError>{
-//     let b = match byte {
-//         0 => false,
-//         1 => true,
-//         _ => return Err(ExecutionError::new(format!(
-//             "heap allocation error: corrupt allocation mapping (is_allocated flag >1)"
-//         ))),
-//     };
-//     Ok(b)
-// }
