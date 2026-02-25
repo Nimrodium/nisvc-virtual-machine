@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs::File, io::Read, mem::transmute, slice, vec};
 
-use crate::{constant::SIGNATURE, memory::bytes_to_u64, ExecutionError};
+use crate::{constant::SIGNATURE, memory::bytes_to_u64, very_verbose_println, ExecutionError};
 
 pub struct NISVCEF {
     pub entry_point: u64,
@@ -37,7 +37,7 @@ impl NISVCEF {
         let debug_symbols_len = consume_double_word_vec(&mut stream)?;
         let debug_symbols_len = 0;
         let debug_symbols_img: Vec<u8> = stream.by_ref().take(debug_symbols_len as usize).collect();
-        println!("entry_point: {entry_point:#x}\nprogram_img_len: {program_img_len:#x}\ndebug_symbols_len:{debug_symbols_len}\ndebug_symbols_img:{debug_symbols_img:x?}");
+        very_verbose_println!("entry_point: {entry_point:#x}\nprogram_img_len: {program_img_len:#x}\ndebug_symbols_len:{debug_symbols_len}\ndebug_symbols_img:{debug_symbols_img:x?}");
 
         let debug_symbols = DebugSymbols::load_symbols(&debug_symbols_img)?;
         Ok(Self {

@@ -112,7 +112,7 @@ fn real_main() -> Result<(), ExecutionError> {
         cmdline.extend(args.cmdline.clone());
         cmdline
     };
-    println!("cmdline: {:?}", cmdline);
+    very_verbose_println!("cmdline: {:?}", cmdline);
     let mut kernel = Kernel::new(args.cmdline, args.heap, args.stack, args.clockspeed);
     kernel
         .system
@@ -123,7 +123,7 @@ fn real_main() -> Result<(), ExecutionError> {
             u64::from_str_radix(entry_override.trim_start_matches("0x"), 16).map_err(|e| {
                 ExecutionError::new(format!("invalid entrypoint override {entry_override}"))
             })?;
-        println!("overriding entrypoint: {addr:#x}");
+        very_verbose_println!("overriding entrypoint: {addr:#x}");
         kernel.system.registers.write(PROGRAM_COUNTER, addr);
     }
     // kernel.gpu.as_mut().unwrap().renderer.present();

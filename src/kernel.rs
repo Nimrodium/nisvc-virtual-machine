@@ -9,10 +9,14 @@ use crossterm::style::Stylize;
 use sdl2::{libc::MS_SILENT, sys::exit};
 
 use crate::{
-    constant::{DEFAULT_CLOCK_SPEED, MEM_HEAP, MEM_INVALID, MEM_STACK, MEM_STATIC, STACK_POINTER},
+    constant::{
+        DEFAULT_CLOCK_SPEED, FRAME_POINTER, MEM_HEAP, MEM_INVALID, MEM_STACK, MEM_STATIC,
+        STACK_POINTER,
+    },
     cpu::CPU,
     kernel_log, ExecutionError, _kernel_log,
     gpu::GPU,
+    very_verbose_println,
 };
 
 pub static mut KERNEL_LOG: bool = false;
@@ -37,12 +41,7 @@ impl Kernel {
         file_descriptor_vector.insert(0, IOInterface::Stdin(stdin()));
         file_descriptor_vector.insert(1, IOInterface::Stdout(stdout()));
         file_descriptor_vector.insert(2, IOInterface::Stderr(stderr()));
-        // let mut gpu_test = match GPU::new(0, 200, 200) {
-        //     Ok(g) => g,
-        //     Err(e) => {
-        //         panic!("{e}")
-        //     }
-        // };
+
         Self {
             system: CPU::new(heap, stack),
             gpu: None,
@@ -205,11 +204,7 @@ impl Kernel {
                 kernel_log!("dump(0)");
                 self.core_dump()
             }
-            _ => {
-                return Err(ExecutionError::new(format!(
-                    "unexpected interrupt {code:#x}"
-                )))
-            }
+
             0x15 => {
                 kernel_log!("arg_argc");
                 self.system.push(self.cmdline.len() as u64)?;
@@ -239,6 +234,39 @@ impl Kernel {
                 self.system.push(region as u64)?;
                 Ok(())
             }
+
+            0x18 => {
+                let argc = self.system.pop()?;
+
+                let old_sp = self.system.registers.read(STACK_POINTER);
+                let fp = self.system.registers.read(FRAME_POINTER);
+                let len = old_sp - fp;
+                self.system.registers.write(STACK_POINTER, fp);
+                let mut argv = Vec::<u64>::with_capacity(argc as usize);
+                for i in 0..argc {
+                    let a = self.system.pop()?;
+                    argv.push(a);
+                    very_verbose_println!("collecting arg {i}: {a}");
+                }
+                let cur_sp = self.system.registers.read(STACK_POINTER);
+                self.system.memory.memcpy(cur_sp, old_sp, len)?;
+                self.system.registers.write(STACK_POINTER, cur_sp + len);
+                for arg in argv {
+                    self.system.push(arg)?;
+                }
+                // store length of sp-fp = len
+                // move sp to fp
+                // pop x args
+
+                // memcpy old_sp..len to sp, move sp to sp+len
+                // push argv to stack
+                Ok(())
+            }
+            _ => {
+                return Err(ExecutionError::new(format!(
+                    "unexpected interrupt {code:#x}"
+                )))
+            }
         }
     }
 
@@ -247,7 +275,7 @@ impl Kernel {
         let millis = (1000.0 * (1.0 / self.clock_speed)) as u64;
         // println!("Cycle {millis}ms");
         let cycle_duration = Duration::from_millis(millis);
-        println!("cycle duration: {millis}ms from {}Hz", self.clock_speed);
+        very_verbose_println!("cycle duration: {millis}ms from {}Hz", self.clock_speed);
         loop {
             std::thread::sleep(cycle_duration);
             self.system.step()?;
